@@ -69,7 +69,7 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
   <div><h1>💰 Orçamento Familiar</h1><div class="sub"><span id="hdrSub">—</span> <span id="driveStatus" style="cursor:pointer" title="Clique para sincronizar"></span></div></div>
   <nav>
     <button data-tab="painel" class="on">Painel</button>
-    <button data-tab="lancar">Lançar</button>
+    <button data-tab="lancar">Anotações</button>
     <button data-tab="orcamento">Orçamento</button>
     <button data-tab="importacao">Importação</button>
     <button data-tab="realizado">Realizado</button>
@@ -511,7 +511,7 @@ function chaveDup(t){return `${t.data}|${t.valor.toFixed(2)}|${normDesc(t.descri
 function modalPreview(regs){
  const existentes=new Set(state.transacoes.map(chaveDup));
  regs.forEach(r=>{r._id=uid();r._dup=existentes.has(chaveDup(r));r._inc=!r._dup;aplicarRegras(r);
-  const an=acharAnotacao(r);if(an){if(!r.categoria&&an.categoria)r.categoria=an.categoria;r._anot=an.id;r._obsAnot=[an.descricao,an.obs].filter(Boolean).join(' · ');}});
+  const an=acharAnotacao({valor:r.valor,data:r.data,fonte:state.ultimaFonte});if(an){if(!r.categoria&&an.categoria)r.categoria=an.categoria;r._anot=an.id;r._obsAnot=[an.descricao,an.obs].filter(Boolean).join(' · ');}});
  const catOpts=c=>'<option value="">—</option>'+grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option ${i.nome===c?'selected':''}>${esc(i.nome)}</option>`).join('')+'</optgroup>').join('');
  const nDup=regs.filter(r=>r._dup).length,nAuto=regs.filter(r=>r.categoria).length,nAnot=regs.filter(r=>r._anot).length;
  const venc=(regs.find(r=>r._venc)||{})._venc||null;
@@ -577,13 +577,14 @@ function renderLancar(){
    <label class="flex1">Categoria<br><select id="lzCat" style="width:100%;font-size:15px;padding:9px">${catOpts}</select></label>
    <label>Data<br><input type="date" id="lzData" value="${hojeISO()}" style="padding:9px"></label>
   </div>
+  <label>Fonte (como pagou)<br><select id="lzFonte" style="width:100%;font-size:15px;padding:9px"><option value="">— não sei / qualquer —</option>${state.contas.map(c=>`<option ${c===state.ultimaFonte?'selected':''}>${esc(c)}</option>`).join('')}</select></label>
   <label>Observações<br><input id="lzObs" style="width:100%;padding:9px" placeholder="opcional — ex.: presente da Daiane"></label>
   <button class="btn" id="lzSalvar" style="font-size:17px;padding:14px">📝 Salvar anotação</button>
  </div></div>
  <div class="card" style="max-width:560px;margin:0 auto"><h2>Anotações ${pendentes?`<span class="tag warn">${pendentes} aguardando extrato</span>`:''}</h2>
  ${anots.length?`<div style="max-height:40vh;overflow:auto">${anots.map(a=>`<div class="li-row">
    <span class="mut" style="font-size:12px">${a.data.slice(8,10)}/${a.data.slice(5,7)}</span>
-   <span class="flex1" style="font-size:13px" title="${esc(a.obs||'')}">${esc(a.descricao.slice(0,26))}${a.categoria?` <span class="fonte-pill">· ${esc(a.categoria)}</span>`:''}</span>
+   <span class="flex1" style="font-size:13px" title="${esc(a.obs||'')}">${esc(a.descricao.slice(0,26))}${a.categoria?` <span class="fonte-pill">· ${esc(a.categoria)}</span>`:''}${a.fonte?` <span class="fonte-pill">· ${esc(a.fonte)}</span>`:''}</span>
    <b style="font-size:13px">${fmtK(a.valor)}</b>
    ${a.usadaEm?'<span class="tag ok" title="Cruzada com o extrato">✓</span>':'<span class="tag warn" title="Aguardando aparecer no extrato">⏳</span>'}
    <button class="mini" data-delanot="${a.id}">🗑</button></div>`).join('')}</div>`:'<p class="muted-sm">Nenhuma anotação ainda.</p>'}
@@ -605,19 +606,24 @@ function renderLancar(){
   if(!valor)return st('<span class="neg">Informe o valor.</span>');
   if(!desc)return st('<span class="neg">Informe o local/descrição.</span>');
   if(!data)return st('<span class="neg">Informe a data.</span>');
-  state.anotacoes.push({id:uid(),data,valor:Math.abs(valor),descricao:desc,categoria:el.querySelector('#lzCat').value||null,obs:el.querySelector('#lzObs').value.trim(),usadaEm:null});
+  const fonteAn=el.querySelector('#lzFonte').value||null;
+  if(fonteAn)state.ultimaFonte=fonteAn;
+  state.anotacoes.push({id:uid(),data,valor:Math.abs(valor),descricao:desc,categoria:el.querySelector('#lzCat').value||null,fonte:fonteAn,obs:el.querySelector('#lzObs').value.trim(),usadaEm:null});
   salvar();renderLancar();
   document.getElementById('tab-lancar').querySelector('#lzStatus').innerHTML='<span class="pos">✅ Anotado! Será cruzada com o extrato na importação.</span>';
  };
 }
 function diffDias(a,b){return Math.abs((new Date(a+'T12:00:00')-new Date(b+'T12:00:00'))/86400000);}
 function acharAnotacao(t){
- let melhor=null,md=Infinity;
+ let melhor=null,ms=Infinity;
  (state.anotacoes||[]).forEach(a=>{
   if(a.usadaEm)return;
   if(Math.abs(a.valor-Math.abs(t.valor))>0.005)return;
+  if(a.fonte&&t.fonte&&a.fonte!==t.fonte)return; // fonte declarada precisa bater
   const d=diffDias(a.data,t.data);
-  if(d<=5&&d<md){md=d;melhor=a;}});
+  if(d>5)return;
+  const s=d+((a.fonte&&t.fonte&&a.fonte===t.fonte)?0:10); // mesma fonte vence o desempate
+  if(s<ms){ms=s;melhor=a;}});
  return melhor;
 }
 function ouvirVoz(cb,st){
