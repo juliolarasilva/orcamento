@@ -115,10 +115,10 @@ const SEED_CONTAS=['Conta Itaú','Conta Caixa','Conta Bradesco','Conta Brasil','
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO};}
+function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[]};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];return;}}catch(e){}state=novoEstado();}
 /* ================= UTILS ================= */
 const fmtBRL=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const fmt=v=>fmtBRL.format(v||0);
@@ -237,8 +237,9 @@ function renderImportacao(){
   <p class="muted-sm" style="margin-bottom:10px">Ao classificar, o lançamento passa para a aba <b>Realizado</b> e alimenta o <b>Real Anual</b> e o <b>Painel</b>. Cada classificação vira uma regra, aplicada automaticamente aos iguais (agora e nas próximas importações).</p>`;
  if(pend.length){
   h+=`<div class="tblwrap" style="max-height:56vh"><table><thead><tr><th class="l">Data</th><th class="l">Fonte</th><th class="l" style="min-width:230px">Descrição</th><th>Valor</th><th class="l" style="min-width:210px">Categoria</th><th class="l" style="min-width:170px">Observações</th><th></th></tr></thead><tbody>`;
-  pend.forEach(t=>{h+=`<tr><td class="l mut">${t.data.split('-').reverse().join('/')}</td><td class="l fonte-pill">${esc(t.fonte)}</td><td class="l" title="${esc(t.descricao)}">${esc(t.descricao.slice(0,48))}</td><td>${fmt(t.valor)}</td>
-   <td class="l"><select data-cat="${t.id}" style="width:100%;border-color:var(--amber);background:#fffbeb">${catOpts()}</select></td>
+  pend.forEach(t=>{const an=acharAnotacao(t);h+=`<tr><td class="l mut">${t.data.split('-').reverse().join('/')}</td><td class="l fonte-pill">${esc(t.fonte)}</td><td class="l" title="${esc(t.descricao)}">${esc(t.descricao.slice(0,48))}</td><td>${fmt(t.valor)}</td>
+   <td class="l"><select data-cat="${t.id}" style="width:100%;border-color:var(--amber);background:#fffbeb">${catOpts()}</select>
+   ${an?`<div class="muted-sm" style="margin-top:3px">📝 ${esc(an.descricao.slice(0,22))}${an.categoria?' → <b>'+esc(an.categoria)+'</b>':''} <button class="mini" data-anot="${t.id}|${an.id}" style="color:var(--acc)">aplicar</button></div>`:''}</td>
    <td class="l"><input data-obs="${t.id}" value="${esc(t.obs||'')}" placeholder="anotação…" style="width:100%;font-size:12px"></td>
    <td><button class="mini" data-del="${t.id}" title="Excluir">🗑</button></td></tr>`;});
   h+='</tbody></table></div>';
@@ -256,6 +257,15 @@ function renderImportacao(){
  el.querySelector('#addManual').onclick=modalManual;
  el.querySelectorAll('input[data-obs]').forEach(i=>{i.onchange=()=>{const t=state.transacoes.find(x=>x.id===i.dataset.obs);if(t){t.obs=i.value.trim();salvar();}};});
  el.querySelectorAll('select[data-cat]').forEach(s=>{s.onchange=()=>categorizar(s.dataset.cat,s.value);});
+ el.querySelectorAll('button[data-anot]').forEach(b=>{b.onclick=()=>{
+  const[tid,aid]=b.dataset.anot.split('|');
+  const t=state.transacoes.find(x=>x.id===tid),a=state.anotacoes.find(x=>x.id===aid);
+  if(!t||!a)return;
+  if(a.categoria)t.categoria=a.categoria;
+  t.obs=[a.descricao,a.obs].filter(Boolean).join(' · ');
+  a.usadaEm=t.id;
+  if(t.categoria){const k=normDesc(t.descricao);if(k.length>=4&&!state.regras[k])state.regras[k]=t.categoria;}
+  rerender();toast(a.categoria?'Anotação aplicada — classificado como '+a.categoria+'.':'Observação preenchida pela anotação.');};});
  el.querySelectorAll('button[data-del]').forEach(b=>{b.onclick=()=>{if(confirm('Excluir este lançamento?')){state.transacoes=state.transacoes.filter(x=>x.id!==b.dataset.del);rerender();}};});
 }
 /* ================= REALIZADO (lançamentos classificados) ================= */
@@ -500,9 +510,10 @@ function parseLinhasFatura(linhas){
 function chaveDup(t){return `${t.data}|${t.valor.toFixed(2)}|${normDesc(t.descricao)}`;}
 function modalPreview(regs){
  const existentes=new Set(state.transacoes.map(chaveDup));
- regs.forEach(r=>{r._id=uid();r._dup=existentes.has(chaveDup(r));r._inc=!r._dup;aplicarRegras(r);});
+ regs.forEach(r=>{r._id=uid();r._dup=existentes.has(chaveDup(r));r._inc=!r._dup;aplicarRegras(r);
+  const an=acharAnotacao(r);if(an){if(!r.categoria&&an.categoria)r.categoria=an.categoria;r._anot=an.id;r._obsAnot=[an.descricao,an.obs].filter(Boolean).join(' · ');}});
  const catOpts=c=>'<option value="">—</option>'+grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option ${i.nome===c?'selected':''}>${esc(i.nome)}</option>`).join('')+'</optgroup>').join('');
- const nDup=regs.filter(r=>r._dup).length,nAuto=regs.filter(r=>r.categoria).length;
+ const nDup=regs.filter(r=>r._dup).length,nAuto=regs.filter(r=>r.categoria).length,nAnot=regs.filter(r=>r._anot).length;
  const venc=(regs.find(r=>r._venc)||{})._venc||null;
  modal(`<h3>Prévia da importação — ${regs.length} lançamento(s)</h3>
   <div class="row" style="margin-bottom:10px">
@@ -513,6 +524,7 @@ function modalPreview(regs){
   <div class="row" style="margin-bottom:10px">
    ${nDup?`<span class="tag warn">⚠ ${nDup} possível(is) duplicado(s) — desmarcados</span>`:''}
    <span class="tag ok">✓ ${nAuto} categorizado(s) automaticamente</span>
+   ${nAnot?`<span class="tag info">📝 ${nAnot} cruzado(s) com suas anotações</span>`:''}
    ${venc?`<span class="tag info">💳 Fatura com vencimento em ${venc.slice(5,7)}/${venc.slice(0,4)} — competência pré-selecionada para o mês de pagamento</span>`:''}
    <span class="tag warn hide" id="pvAviso">⚠ Cartão de crédito: prefira como competência o mês de pagamento da fatura</span>
   </div>
@@ -521,7 +533,7 @@ function modalPreview(regs){
    <td class="l">${r.data.split('-').reverse().join('/')}</td><td class="l" title="${esc(r.descricao)}">${esc(r.descricao.slice(0,45))}</td>
    <td>${fmt(r.valor)}</td><td class="l" data-tipo="${r._id}">${r.valor<0?'<span class="pos">estorno</span>':(r.tipo==='receita'?'<span class="pos">entrada</span>':'saída')}</td>
    <td class="l"><select data-pcat="${r._id}" style="width:100%">${catOpts(r.categoria)}</select></td>
-   <td class="l">${r._dup?'<span class="tag warn">duplicado?</span>':(r.categoria?'<span class="tag ok">auto</span>':'<span class="tag info">novo</span>')}</td></tr>`).join('')}
+   <td class="l">${r._dup?'<span class="tag warn">duplicado?</span>':(r._anot?'<span class="tag info">📝 anotação</span>':r.categoria?'<span class="tag ok">auto</span>':'novo')}</td></tr>`).join('')}
   </tbody></table></div>
   <div class="row" style="margin-top:14px"><button class="btn" id="pvOk">Importar selecionados</button><button class="btn ghost" onclick="fecharModal()">Cancelar</button></div>`);
  const updAviso=()=>{const fo=document.getElementById('pvFonte').value.toLowerCase();const co=document.getElementById('pvComp').value;document.getElementById('pvAviso').classList.toggle('hide',!(fo.includes('cart')&&co==='auto'));};
@@ -534,7 +546,8 @@ function modalPreview(regs){
   const fonte=document.getElementById('pvFonte').value,compSel=document.getElementById('pvComp').value;
   let n=0;
   regs.filter(r=>r._inc).forEach(r=>{
-   state.transacoes.push({id:r._id,data:r.data,comp:compSel==='auto'?compDe(r.data):compSel,fonte,descricao:r.descricao,valor:r.valor,tipo:r.tipo,categoria:r.categoria||null});
+   state.transacoes.push({id:r._id,data:r.data,comp:compSel==='auto'?compDe(r.data):compSel,fonte,descricao:r.descricao,valor:r.valor,tipo:r.tipo,categoria:r.categoria||null,obs:r._obsAnot||''});
+   if(r._anot){const an=state.anotacoes.find(x=>x.id===r._anot);if(an)an.usadaEm=r._id;}
    if(r.categoria){const k=normDesc(r.descricao);if(k.length>=4&&!state.regras[k])state.regras[k]=r.categoria;}
    n++;});
   if(n){const comps=regs.filter(r=>r._inc).map(r=>compSel==='auto'?compDe(r.data):compSel);
@@ -545,10 +558,13 @@ function modalPreview(regs){
 /* ================= LANÇAR (entrada rápida / celular) ================= */
 const hojeISO=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
 function renderLancar(){
- const catOpts='<option value="">— classificar depois (Importação) —</option>'+grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option>${esc(i.nome)}</option>`).join('')+'</optgroup>').join('');
+ const catOpts='<option value="">— escolher depois —</option>'+grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option>${esc(i.nome)}</option>`).join('')+'</optgroup>').join('');
+ const anots=[...state.anotacoes].sort((a,b)=>b.data.localeCompare(a.data)).slice(0,50);
+ const pendentes=state.anotacoes.filter(a=>!a.usadaEm).length;
  const el=document.getElementById('tab-lancar');
  el.innerHTML=`<div class="card" style="max-width:560px;margin:0 auto">
- <h2>Lançamento rápido</h2>
+ <h2>Anotar compra</h2>
+ <p class="muted-sm" style="margin-bottom:10px">Anote o gasto na hora, antes que a memória apague. A anotação <b>não entra nos números</b> — a fonte da verdade é o extrato. Na importação, o app cruza automaticamente (mesmo valor, datas próximas) e usa a anotação para classificar e preencher a observação.</p>
  <div class="row" style="margin-bottom:10px">
   <button class="btn sec flex1" id="lzVoz" style="padding:12px">🎤 Falar</button>
   <button class="btn sec flex1" id="lzFoto" style="padding:12px">📷 Nota fiscal</button>
@@ -556,16 +572,22 @@ function renderLancar(){
  <div id="lzStatus" class="muted-sm" style="margin-bottom:10px;min-height:18px"></div>
  <div style="display:grid;gap:12px">
   <label>Valor (R$)<br><input id="lzValor" inputmode="decimal" placeholder="0,00" style="width:100%;font-size:24px;padding:10px;font-weight:700"></label>
-  <label>Local / descrição<br><input id="lzDesc" placeholder="ex.: Padaria São Joaquim" style="width:100%;font-size:16px;padding:10px"></label>
-  <label>Categoria<br><select id="lzCat" style="width:100%;font-size:16px;padding:10px">${catOpts}</select></label>
+  <label>Local / o que foi<br><input id="lzDesc" placeholder="ex.: Padaria São Joaquim" style="width:100%;font-size:16px;padding:10px"></label>
   <div class="row">
-   <label class="flex1">Fonte<br><select id="lzFonte" style="width:100%;padding:8px"><option value="">— escolher —</option>${state.contas.map(c=>`<option ${c===state.ultimaFonte?'selected':''}>${esc(c)}</option>`).join('')}</select></label>
-   <label>Data<br><input type="date" id="lzData" value="${hojeISO()}" style="padding:8px"></label>
+   <label class="flex1">Categoria<br><select id="lzCat" style="width:100%;font-size:15px;padding:9px">${catOpts}</select></label>
+   <label>Data<br><input type="date" id="lzData" value="${hojeISO()}" style="padding:9px"></label>
   </div>
-  <label>Observações<br><input id="lzObs" style="width:100%;padding:8px" placeholder="opcional"></label>
-  <label class="row" style="gap:8px;align-items:center"><input type="checkbox" id="lzReceita" style="width:18px;height:18px"> É uma entrada (receita)</label>
-  <button class="btn" id="lzSalvar" style="font-size:17px;padding:14px">💾 Salvar lançamento</button>
+  <label>Observações<br><input id="lzObs" style="width:100%;padding:9px" placeholder="opcional — ex.: presente da Daiane"></label>
+  <button class="btn" id="lzSalvar" style="font-size:17px;padding:14px">📝 Salvar anotação</button>
  </div></div>
+ <div class="card" style="max-width:560px;margin:0 auto"><h2>Anotações ${pendentes?`<span class="tag warn">${pendentes} aguardando extrato</span>`:''}</h2>
+ ${anots.length?`<div style="max-height:40vh;overflow:auto">${anots.map(a=>`<div class="li-row">
+   <span class="mut" style="font-size:12px">${a.data.slice(8,10)}/${a.data.slice(5,7)}</span>
+   <span class="flex1" style="font-size:13px" title="${esc(a.obs||'')}">${esc(a.descricao.slice(0,26))}${a.categoria?` <span class="fonte-pill">· ${esc(a.categoria)}</span>`:''}</span>
+   <b style="font-size:13px">${fmtK(a.valor)}</b>
+   ${a.usadaEm?'<span class="tag ok" title="Cruzada com o extrato">✓</span>':'<span class="tag warn" title="Aguardando aparecer no extrato">⏳</span>'}
+   <button class="mini" data-delanot="${a.id}">🗑</button></div>`).join('')}</div>`:'<p class="muted-sm">Nenhuma anotação ainda.</p>'}
+ </div>
  <input type="file" id="lzFile" accept="image/*" capture="environment" class="hide">`;
  const st=m=>{el.querySelector('#lzStatus').innerHTML=m;};
  const fill=r=>{if(r.valor!=null)el.querySelector('#lzValor').value=String(r.valor.toFixed(2)).replace('.',',');
@@ -575,23 +597,28 @@ function renderLancar(){
  el.querySelector('#lzVoz').onclick=()=>ouvirVoz(txt=>{st('Entendi: “'+esc(txt)+'”');fill(parseFala(txt));},st);
  el.querySelector('#lzFoto').onclick=()=>el.querySelector('#lzFile').click();
  el.querySelector('#lzFile').onchange=e=>{if(e.target.files[0])lerNota(e.target.files[0],st,fill);e.target.value='';};
+ el.querySelectorAll('button[data-delanot]').forEach(b=>{b.onclick=()=>{state.anotacoes=state.anotacoes.filter(x=>x.id!==b.dataset.delanot);rerender();};});
  el.querySelector('#lzSalvar').onclick=()=>{
   const valor=parseValorBR(el.querySelector('#lzValor').value);
   const desc=el.querySelector('#lzDesc').value.trim();
-  const fonte=el.querySelector('#lzFonte').value;
   const data=el.querySelector('#lzData').value;
   if(!valor)return st('<span class="neg">Informe o valor.</span>');
   if(!desc)return st('<span class="neg">Informe o local/descrição.</span>');
-  if(!fonte)return st('<span class="neg">Escolha a fonte.</span>');
   if(!data)return st('<span class="neg">Informe a data.</span>');
-  state.ultimaFonte=fonte;
-  const cat=el.querySelector('#lzCat').value||null;
-  const rec=el.querySelector('#lzReceita').checked;
-  state.transacoes.push({id:uid(),data,comp:compDe(data),fonte,descricao:desc,valor:Math.abs(valor),tipo:rec?'receita':'despesa',categoria:cat,obs:el.querySelector('#lzObs').value.trim()});
-  if(cat){const k=normDesc(desc);if(k.length>=4&&!state.regras[k])state.regras[k]=cat;}
+  state.anotacoes.push({id:uid(),data,valor:Math.abs(valor),descricao:desc,categoria:el.querySelector('#lzCat').value||null,obs:el.querySelector('#lzObs').value.trim(),usadaEm:null});
   salvar();renderLancar();
-  document.getElementById('tab-lancar').querySelector('#lzStatus').innerHTML='<span class="pos">✅ Lançado! '+(cat?'Já está no Realizado.':'Aguardando classificação na Importação.')+'</span>';
+  document.getElementById('tab-lancar').querySelector('#lzStatus').innerHTML='<span class="pos">✅ Anotado! Será cruzada com o extrato na importação.</span>';
  };
+}
+function diffDias(a,b){return Math.abs((new Date(a+'T12:00:00')-new Date(b+'T12:00:00'))/86400000);}
+function acharAnotacao(t){
+ let melhor=null,md=Infinity;
+ (state.anotacoes||[]).forEach(a=>{
+  if(a.usadaEm)return;
+  if(Math.abs(a.valor-Math.abs(t.valor))>0.005)return;
+  const d=diffDias(a.data,t.data);
+  if(d<=5&&d<md){md=d;melhor=a;}});
+ return melhor;
 }
 function ouvirVoz(cb,st){
  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -716,6 +743,9 @@ function mesclarEstados(remoto){
  Object.entries(remoto.orcamento||{}).forEach(([ano,cats])=>{
   if(!state.orcamento[ano])state.orcamento[ano]=cats;
   else Object.entries(cats).forEach(([c,v])=>{if(!state.orcamento[ano][c])state.orcamento[ano][c]=v;});});
+ if(!state.anotacoes)state.anotacoes=[];
+ const aids=new Set(state.anotacoes.map(a=>a.id));
+ (remoto.anotacoes||[]).forEach(a=>{if(!aids.has(a.id))state.anotacoes.push(a);});
  (remoto.categorias||[]).forEach(c=>{if(!catPorNome(c.nome))state.categorias.push(c);});
  (remoto.contas||[]).forEach(c=>{if(!state.contas.includes(c))state.contas.push(c);});
  return n;
