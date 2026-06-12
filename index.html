@@ -115,10 +115,10 @@ const SEED_CONTAS=['Conta Itaú','Conta Caixa','Conta Bradesco','Conta Brasil','
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[]};}
+function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{}};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};return;}}catch(e){}state=novoEstado();}
 /* ================= UTILS ================= */
 const fmtBRL=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const fmt=v=>fmtBRL.format(v||0);
@@ -144,6 +144,18 @@ function rerender(){salvar();TABS[tabAtiva]();}
 function modal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('modalBg').classList.remove('hide');}
 function fecharModal(){document.getElementById('modalBg').classList.add('hide');}
 document.getElementById('modalBg').addEventListener('click',e=>{if(e.target.id==='modalBg')fecharModal();});
+/* ================= CHECK DE SALDO ================= */
+function contasCorrentes(){return state.contas.filter(c=>!/cart/i.test(c));}
+function saldoGet(comp,conta){return (state.saldos&&state.saldos[comp])?state.saldos[comp][conta]:undefined;}
+function saldoSet(comp,conta,v){if(!state.saldos)state.saldos={};if(!state.saldos[comp])state.saldos[comp]={};if(v===null||v===undefined)delete state.saldos[comp][conta];else state.saldos[comp][conta]=v;}
+function movimentoContas(comp){
+ const ccs=contasCorrentes();let e=0,s=0;
+ state.transacoes.forEach(t=>{
+  if(!t.data||t.data.slice(0,7)!==comp)return;
+  if(!ccs.includes(t.fonte))return;
+  if(t.tipo==='receita')e+=t.valor;else s+=t.valor;});
+ return {e,s};
+}
 /* ================= PAINEL (REAL x ORÇADO) ================= */
 function renderPainel(){
  const ano=state.ano,mes=state.mes,real=realPorCatMes(ano);
@@ -182,7 +194,45 @@ function renderPainel(){
   if(rm||ra)h+=`<tr class="grp"><td class="l" style="color:var(--amber)">⚠ Sem categoria</td><td>${fmt(rm)}</td><td>—</td><td>—</td><td>—</td><td style="border-left:2px solid var(--line)">${fmt(ra)}</td><td>—</td><td>—</td><td>—</td></tr>`;}
  h+=`<tr class="total"><td class="l">SALDO (Receitas − Despesas)</td>${celulas(saldoR,saldoO,'receita')}${celulas(saldoRA,saldoOA,'receita',true)}</tr>`;
  h+='</tbody></table></div>';
+ // ---- Check de saldo das contas ----
+ const mm2=String(mes+1).padStart(2,'0'),comp=`${ano}-${mm2}`;
+ const compAnt=mes===0?`${ano-1}-12`:`${ano}-${String(mes).padStart(2,'0')}`;
+ const nomeAnt=mes===0?`Dez/${ano-1}`:`${MESES[mes-1]}/${ano}`;
+ const ccs=contasCorrentes();
+ let totAnt=0,totAtu=0,faltaAnt=0,faltaAtu=0;
+ const linhasS=ccs.map(c=>{
+  const va=saldoGet(compAnt,c),vb=saldoGet(comp,c);
+  if(va==null)faltaAnt++;else totAnt+=va;
+  if(vb==null)faltaAtu++;else totAtu+=vb;
+  return `<tr><td class="l">${esc(c)}</td>
+   <td><input class="num" style="width:120px" data-sldant="${esc(c)}" value="${va!=null?String(va.toFixed(2)).replace('.',','):''}" placeholder="—"></td>
+   <td><input class="num" style="width:120px" data-sldatu="${esc(c)}" value="${vb!=null?String(vb.toFixed(2)).replace('.',','):''}" placeholder="—"></td></tr>`;}).join('');
+ const mov=movimentoContas(comp);
+ const esperado=totAnt+mov.e-mov.s;
+ const dif=totAtu-esperado;
+ const completo=!faltaAnt&&!faltaAtu&&ccs.length>0;
+ const fecha=Math.abs(dif)<0.01;
+ let statusS;
+ if(!completo)statusS=`<span class="tag warn">⚠ informe os saldos${faltaAnt?' de '+nomeAnt:''}${faltaAnt&&faltaAtu?' e':''}${faltaAtu?' de '+MESES[mes]+'/'+ano:''}</span>`;
+ else statusS=fecha?'<span class="tag ok">✓ Conciliação fecha</span>':`<span class="tag warn">⚠ Diferença de ${fmt(dif)} — confira lançamentos faltantes ou saldos digitados</span>`;
+ h+=`<div class="card"><h2>🏦 Check de saldo das contas — ${MESES_FULL[mes]}/${ano}</h2>
+  <p class="muted-sm" style="margin-bottom:10px">Informe o saldo de fim de mês de cada conta corrente (cartões ficam fora — a fatura entra como saída via "Pagamento de Fatura"). Validação: saldo de ${nomeAnt} + entradas − saídas do mês = saldo atual.</p>
+  <div class="row" style="align-items:flex-start;gap:24px;flex-wrap:wrap">
+  <table style="max-width:430px"><thead><tr><th class="l">Conta</th><th>Fim ${nomeAnt}</th><th>Fim ${MESES[mes]}/${ano}</th></tr></thead><tbody>
+   ${linhasS}
+   <tr class="total"><td class="l">Total</td><td>${faltaAnt?'<span class="mut">incompleto</span>':fmt(totAnt)}</td><td>${faltaAtu?'<span class="mut">incompleto</span>':fmt(totAtu)}</td></tr>
+  </tbody></table>
+  <div style="min-width:240px">
+   <div class="li-row"><span class="flex1">Saldo anterior (${nomeAnt})</span><b>${fmt(totAnt)}</b></div>
+   <div class="li-row"><span class="flex1">+ Entradas nas contas</span><b class="pos">${fmt(mov.e)}</b></div>
+   <div class="li-row"><span class="flex1">− Saídas das contas</span><b class="neg">${fmt(mov.s)}</b></div>
+   <div class="li-row"><span class="flex1">= Saldo esperado</span><b>${fmt(esperado)}</b></div>
+   <div class="li-row"><span class="flex1">Saldo informado</span><b>${fmt(totAtu)}</b></div>
+   <div style="margin-top:8px">${statusS}</div>
+  </div></div></div>`;
  const el=document.getElementById('tab-painel');el.innerHTML=h;
+ el.querySelectorAll('input[data-sldant]').forEach(i=>{i.onchange=()=>{const v=parseValorBR(i.value);saldoSet(compAnt,i.dataset.sldant,i.value.trim()===''?null:v);rerender();};});
+ el.querySelectorAll('input[data-sldatu]').forEach(i=>{i.onchange=()=>{const v=parseValorBR(i.value);saldoSet(comp,i.dataset.sldatu,i.value.trim()===''?null:v);rerender();};});
  el.querySelector('#pMes').onchange=e=>{state.mes=+e.target.value;rerender();};
  el.querySelector('#pAno').onchange=e=>{state.ano=+e.target.value;rerender();};
  const sc=el.querySelector('#pSemCat');if(sc)sc.onclick=()=>irParaAba('importacao');
@@ -749,6 +799,8 @@ function mesclarEstados(remoto){
  Object.entries(remoto.orcamento||{}).forEach(([ano,cats])=>{
   if(!state.orcamento[ano])state.orcamento[ano]=cats;
   else Object.entries(cats).forEach(([c,v])=>{if(!state.orcamento[ano][c])state.orcamento[ano][c]=v;});});
+ if(!state.saldos)state.saldos={};
+ Object.entries(remoto.saldos||{}).forEach(([m,cs])=>{if(!state.saldos[m])state.saldos[m]=cs;else Object.entries(cs).forEach(([c,v])=>{if(state.saldos[m][c]===undefined)state.saldos[m][c]=v;});});
  if(!state.anotacoes)state.anotacoes=[];
  const aids=new Set(state.anotacoes.map(a=>a.id));
  (remoto.anotacoes||[]).forEach(a=>{if(!aids.has(a.id))state.anotacoes.push(a);});
