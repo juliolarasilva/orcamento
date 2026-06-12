@@ -112,12 +112,13 @@ const SEED_CATS=(()=>{const d=[
  ['Transferências','transferencia',['Transferência entre contas','Pagamento de Fatura']]
 ];const out=[];d.forEach(([g,t,items])=>items.forEach(n=>out.push({grupo:g,nome:n,tipo:t})));return out;})();
 const SEED_CONTAS=['Conta Itaú','Conta Caixa','Conta Bradesco','Conta Brasil','Conta Santander','Cartão Caixa Elo','Cartão Brasil','Cartão Bradesco'];
+const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:''};}
+function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(state.driveClientId===undefined)state.driveClientId='';return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;return;}}catch(e){}state=novoEstado();}
 /* ================= UTILS ================= */
 const fmtBRL=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const fmt=v=>fmtBRL.format(v||0);
@@ -739,7 +740,7 @@ function renderConfig(){
  let h=`<div class="cfg-grid">
  <div class="card"><h2>Família</h2><div class="row"><input id="cfgFam" value="${esc(state.familia)}" class="flex1"><button class="btn ghost" id="cfgFamOk">Salvar</button></div></div>
  <div class="card"><h2>Sincronização Google Drive <span class="tag info" id="cfgDriveTag">${state.driveClientId?'configurado':'não configurado'}</span></h2>
-  <p class="muted-sm" style="margin-bottom:10px">Sincroniza os dados entre computador e celular usando um arquivo no seu Google Drive. Requer publicar a página na web e criar uma credencial (veja o guia na pasta). Cole abaixo o Client ID:</p>
+  <p class="muted-sm" style="margin-bottom:10px">Sincroniza os dados entre aparelhos usando um arquivo no Google Drive de quem conecta — cada família vê apenas os próprios dados. O Client ID já vem preenchido; basta conectar. (Para usar outra credencial, edite abaixo.)</p>
   <div class="row"><input id="cfgClientId" class="flex1" placeholder="xxxxx.apps.googleusercontent.com" value="${esc(state.driveClientId)}"><button class="btn ghost" id="cfgClientIdOk">Salvar</button><button class="btn" id="cfgDriveSync">☁ Conectar e sincronizar</button></div></div>
  <div class="card"><h2>Backup dos dados</h2>
   <p class="muted-sm" style="margin-bottom:10px">Os dados ficam salvos neste navegador. Exporte um arquivo .json regularmente como cópia de segurança — e use-o para compartilhar com a família ou abrir em outro computador.</p>
