@@ -88,6 +88,7 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
 </main>
 <div id="modalBg" class="modal-bg hide"><div class="modal" id="modalBox"></div></div>
 <input type="file" id="fileInput" multiple accept=".ofx,.csv,.txt,.pdf,.xls" class="hide">
+<input type="file" id="fileRealizado" accept=".csv,.txt" class="hide">
 <script>
 'use strict';
 /* ================= DADOS / ESTADO ================= */
@@ -126,7 +127,7 @@ const fmtK=v=>fmtBRL.format(v||0).replace(/,\d\d$/,'');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const normDesc=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\d+/g,'').replace(/[^A-Z ]/g,' ').replace(/\s+/g,' ').trim();
-const parseValorBR=s=>{if(typeof s==='number')return s;s=String(s||'').trim().replace(/R\$\s?/,'');const neg=/^-|^\(.*\)$/.test(s);s=s.replace(/[()\-+]/g,'');if(/,\d{1,2}$/.test(s))s=s.replace(/\./g,'').replace(',','.');else if(/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s))s=s.replace(/,/g,'');const v=parseFloat(s);return isNaN(v)?null:(neg?-v:v);};
+const parseValorBR=s=>{if(typeof s==='number')return s;s=String(s||'').trim().replace(/R\$\s?/,'');const neg=/^-|^\(.*\)$/.test(s);s=s.replace(/[()\-+]/g,'');if(/,\d{1,2}$/.test(s))s=s.replace(/\./g,'').replace(',','.');else if(/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s))s=s.replace(/,/g,'');else if(/^\d{1,3}(\.\d{3})+$/.test(s))s=s.replace(/\./g,'');const v=parseFloat(s);return isNaN(v)?null:(neg?-v:v);};
 function parseDataBR(s){s=String(s||'').trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return s.slice(0,10);m=s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);if(m){let[,d,mo,y]=m;if(y.length===2)y='20'+y;return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;}return null;}
 const compDe=d=>d?d.slice(0,7):null;
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3200);}
@@ -283,6 +284,10 @@ function renderImportacao(){
   </div>
   <div class="drop" id="dropZone">📂 Arraste arquivos <b>OFX</b>, <b>CSV</b> ou <b>PDF de fatura</b> aqui — ou clique para escolher.<br><span class="muted-sm">OFX: extratos do internet banking · CSV: planilhas do banco · PDF: fatura de cartão</span></div>
   <div class="row" style="margin-top:10px"><button class="btn sec" id="addManual">+ Lançamento manual</button></div></div>
+ <div class="card"><h2>📥 Importar realizado <span class="muted-sm" style="font-weight:400">(CSV com várias contas e meses)</span></h2>
+  <p class="muted-sm" style="margin-bottom:10px">Para uma planilha de <b>realizado</b> em que <b>cada linha já traz sua própria conta/cartão, competência e categoria</b> (ex.: a exportação da Família Guerreiro). Diferente da importação acima, aqui cada linha entra na sua conta e no seu mês — e você confirma o mapa de contas e categorias antes de gravar.</p>
+  <div class="drop" id="dropReal" style="border-color:var(--acc)">📊 Arraste o <b>CSV de realizado</b> aqui — ou clique para escolher.<br><span class="muted-sm">Lê por linha: Data · Competência · Fonte · Despesa · Valor · Categoria (Linha Orçamento)</span></div>
+ </div>
  <div class="card"><h2>2. Classificar pendentes ${pend.length?`<span class="tag warn">${pend.length} aguardando</span>`:'<span class="tag ok">✓ nenhum pendente</span>'}</h2>
   <p class="muted-sm" style="margin-bottom:10px">Ao classificar, o lançamento passa para a aba <b>Realizado</b> e alimenta o <b>Real Anual</b> e o <b>Painel</b>. Cada classificação vira uma regra, aplicada automaticamente aos iguais (agora e nas próximas importações).</p>`;
  if(pend.length){
@@ -305,6 +310,12 @@ function renderImportacao(){
  dz.ondrop=e=>{e.preventDefault();dz.classList.remove('over');if(temFonte())processarArquivos(e.dataTransfer.files);};
  fi.onchange=()=>{processarArquivos(fi.files);fi.value='';};
  el.querySelector('#addManual').onclick=modalManual;
+ const dr=el.querySelector('#dropReal'),fri=document.getElementById('fileRealizado');
+ dr.onclick=()=>fri.click();
+ dr.ondragover=e=>{e.preventDefault();dr.classList.add('over');};
+ dr.ondragleave=()=>dr.classList.remove('over');
+ dr.ondrop=e=>{e.preventDefault();dr.classList.remove('over');if(e.dataTransfer.files[0])abrirImportRealizado(e.dataTransfer.files[0]);};
+ fri.onchange=()=>{if(fri.files[0])abrirImportRealizado(fri.files[0]);fri.value='';};
  el.querySelectorAll('input[data-obs]').forEach(i=>{i.onchange=()=>{const t=state.transacoes.find(x=>x.id===i.dataset.obs);if(t){t.obs=i.value.trim();salvar();}};});
  el.querySelectorAll('select[data-cat]').forEach(s=>{s.onchange=()=>categorizar(s.dataset.cat,s.value);});
  el.querySelectorAll('button[data-anot]').forEach(b=>{b.onclick=()=>{
@@ -605,6 +616,112 @@ function modalPreview(regs){
    const maisComum=Object.entries(freq).sort((x,y)=>y[1]-x[1])[0][0];
    state.ano=+maisComum.slice(0,4);fRea.mes='todos';fRea.cat='todas';fRea.fonte='todas';fRea.busca='';}
   fecharModal();rerender();toast(n+' lançamento(s) importado(s) — exibindo '+state.ano+'.');};}
+/* ============ IMPORTAÇÃO REALIZADO (multi-conta / multi-mês) ============ */
+const normKey=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+const MES_ABREV={JAN:1,FEV:2,MAR:3,ABR:4,MAI:5,JUN:6,JUL:7,AGO:8,SET:9,OUT:10,NOV:11,DEZ:12};
+const tituloCase=s=>String(s||'').toLowerCase().replace(/(^|[\s\/])\S/g,c=>c.toUpperCase());
+function parseCompRealizado(compCell,mesCell,anoCell,dataISO){
+ const ano=parseInt(String(anoCell||'').trim(),10),mes=parseInt(String(mesCell||'').trim(),10);
+ if(ano>=2000&&mes>=1&&mes<=12)return `${ano}-${String(mes).padStart(2,'0')}`;
+ const c=String(compCell||'').trim();
+ let m=c.match(/^(\d{1,2})\/(\d{4})$/);if(m)return `${m[2]}-${m[1].padStart(2,'0')}`;
+ m=c.match(/^(\d{4})-(\d{1,2})/);if(m)return `${m[1]}-${m[2].padStart(2,'0')}`;
+ m=c.match(/^([A-Za-zçÇãéêíóôúÁÉ]{3,})\/(\d{2,4})$/);
+ if(m){const mm=MES_ABREV[normKey(m[1]).slice(0,3)];if(mm){let y=m[2];if(y.length===2)y='20'+y;return `${y}-${String(mm).padStart(2,'0')}`;}}
+ return dataISO?dataISO.slice(0,7):null;
+}
+function parseDataRealizado(cell,comp){
+ const iso=parseDataBR(cell);if(iso)return iso;
+ const m=String(cell||'').trim().match(/^(\d{1,2})[\/.\-](\d{1,2})$/);
+ if(m&&comp)return `${comp.slice(0,4)}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+ return comp?comp+'-01':null;
+}
+async function abrirImportRealizado(f){
+ let linhas;try{linhas=parseCSVlinhas(await lerTexto(f));}catch(e){return toast('Erro ao ler '+f.name);}
+ if(linhas.length<2)return toast('CSV vazio: '+f.name);
+ const nCols=Math.max(...linhas.map(l=>l.length));
+ const head=linhas[0].map(normKey);
+ const acha=(...keys)=>{for(let i=0;i<head.length;i++)if(keys.some(k=>head[i].includes(k)))return i;return -1;};
+ const cData=acha('DATA'),cComp=acha('COMPET'),cFonte=acha('FONTE','CONTA'),cDesc=acha('DESPESA','DESCRI','HISTOR','LANCAMENTO'),cVal=acha('R$','VALOR'),cCat=acha('LINHA','CATEGOR'),cMes=acha('MES'),cAno=acha('ANO');
+ const opt=(sel,nen)=>(nen?`<option value="-1" ${sel<0?'selected':''}>— nenhuma —</option>`:'')+Array.from({length:nCols},(_,i)=>`<option value="${i}" ${i===sel?'selected':''}>Col ${i+1}: ${esc((linhas[0][i]||'').slice(0,18))}</option>`).join('');
+ modal(`<h3>Importar realizado — mapear colunas</h3>
+  <p class="muted-sm">Confira as colunas detectadas. <b>Competência</b> (ou Mês+Ano) define o período; a coluna Data pode ser placeholder.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;margin:10px 0">
+   <label>Data <select id="mrData">${opt(cData,true)}</select></label>
+   <label>Competência <select id="mrComp">${opt(cComp,true)}</select></label>
+   <label>Mês <select id="mrMes">${opt(cMes,true)}</select></label>
+   <label>Ano <select id="mrAno">${opt(cAno,true)}</select></label>
+   <label>Fonte <select id="mrFonte">${opt(cFonte,true)}</select></label>
+   <label>Descrição <select id="mrDesc">${opt(cDesc,true)}</select></label>
+   <label>Valor <select id="mrVal">${opt(cVal,false)}</select></label>
+   <label>Categoria <select id="mrCat">${opt(cCat,true)}</select></label>
+   <label><input type="checkbox" id="mrHead" checked> 1ª linha é cabeçalho</label>
+  </div>
+  <div class="tblwrap" style="max-height:200px"><table><tbody>${linhas.slice(0,6).map(l=>'<tr>'+Array.from({length:nCols},(_,i)=>`<td class="l">${esc((l[i]||'').replace(/\s+/g,' ').slice(0,16))}</td>`).join('')+'</tr>').join('')}</tbody></table></div>
+  <div class="row" style="margin-top:12px"><button class="btn" id="mrOk">Continuar</button><button class="btn ghost" onclick="fecharModal()">Cancelar</button></div>`);
+ document.getElementById('mrOk').onclick=()=>{
+  const gv=id=>+document.getElementById(id).value;
+  const m={data:gv('mrData'),comp:gv('mrComp'),mes:gv('mrMes'),ano:gv('mrAno'),fonte:gv('mrFonte'),desc:gv('mrDesc'),val:gv('mrVal'),cat:gv('mrCat')};
+  const inicio=document.getElementById('mrHead').checked?1:0;
+  const recs=[];
+  linhas.slice(inicio).forEach(l=>{
+   const valor=parseValorBR(m.val>=0?(l[m.val]||''):'');
+   if(valor===null||valor===0)return;
+   const dataRaw=m.data>=0?(l[m.data]||''):'';
+   const comp=parseCompRealizado(m.comp>=0?l[m.comp]:'',m.mes>=0?l[m.mes]:'',m.ano>=0?l[m.ano]:'',parseDataBR(dataRaw));
+   if(!comp)return;
+   const data=parseDataRealizado(dataRaw,comp);
+   recs.push({data,comp,fonte:(m.fonte>=0?(l[m.fonte]||''):'').replace(/\s+/g,' ').trim(),descricao:((m.desc>=0?(l[m.desc]||''):'').replace(/\s+/g,' ').trim())||'(sem descrição)',valor,categoria:(m.cat>=0?(l[m.cat]||''):'').replace(/\s+/g,' ').trim()});
+  });
+  if(!recs.length)return toast('Nenhuma linha válida encontrada no CSV.');
+  modalMapearRealizado(recs);
+ };
+}
+function modalMapearRealizado(recs){
+ const catLookup={};state.categorias.forEach(c=>catLookup[normKey(c.nome)]=c);
+ const fonteLookup={};state.contas.forEach(c=>fonteLookup[normKey(c)]=c);
+ const fonteMap={},catMap={};
+ recs.forEach(r=>{const fk=normKey(r.fonte);if(fk){(fonteMap[fk]=fonteMap[fk]||{raw:r.fonte,n:0}).n++;}
+  const ck=normKey(r.categoria);if(ck){(catMap[ck]=catMap[ck]||{raw:r.categoria,n:0}).n++;}});
+ const guessTipo=k=>{if(/TRANSFER|PAGAMENTO DE FATURA/.test(k))return 'transferencia';if(/SALARIO|ENTRADAS|ADIANTAMENTO|RENDIMENTO|RESTITUI|REEMBOLSO|OUTRAS ENTRADAS|FERIAS|^13 |DAIANE/.test(k))return 'receita';return 'despesa';};
+ const contaOpts=sel=>'<option value="">➕ criar nova</option>'+state.contas.map(c=>`<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
+ const catOptsSel=sel=>'<option value="">➕ criar nova</option>'+grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option ${i.nome===sel?'selected':''}>${esc(i.nome)}</option>`).join('')+'</optgroup>').join('');
+ const fkeys=Object.keys(fonteMap).sort((a,b)=>fonteMap[b].n-fonteMap[a].n);
+ const ckeys=Object.keys(catMap).sort((a,b)=>catMap[b].n-catMap[a].n);
+ const nFonteNova=fkeys.filter(k=>!fonteLookup[k]).length,nCatNova=ckeys.filter(k=>!catLookup[k]).length;
+ const fonteRows=fkeys.map((k,idx)=>{const v=fonteMap[k],match=fonteLookup[k]||'';return `<tr><td class="l"><b>${esc(v.raw)}</b> <span class="mut">(${v.n})</span></td><td class="l"><select data-fk="${idx}" style="width:100%">${contaOpts(match)}</select></td></tr>`;}).join('');
+ const catRows=ckeys.map((k,idx)=>{const v=catMap[k],match=catLookup[k]?catLookup[k].nome:'',tg=guessTipo(k);return `<tr><td class="l"><b>${esc(v.raw)}</b> <span class="mut">(${v.n})</span></td><td class="l"><select data-ck="${idx}" style="width:100%">${catOptsSel(match)}</select></td><td class="l"><select data-ctipo="${idx}" ${match?'disabled style="opacity:.4"':''}><option value="despesa" ${tg==='despesa'?'selected':''}>despesa</option><option value="receita" ${tg==='receita'?'selected':''}>receita</option><option value="transferencia" ${tg==='transferencia'?'selected':''}>transferência</option></select></td></tr>`;}).join('');
+ const semCat=recs.filter(r=>!normKey(r.categoria)).length;
+ modal(`<h3>Confirmar contas e categorias — ${recs.length} lançamento(s)</h3>
+  <p class="muted-sm">Itens com correspondência já vêm preenchidos. Onde estiver <b>➕ criar nova</b>, será criada com o nome do CSV (ajuste o tipo). Você também pode apontar para um item já existente.</p>
+  <div class="row" style="margin:6px 0"><span class="tag info">🏦 ${nFonteNova} conta(s) nova(s)</span><span class="tag info">🏷️ ${nCatNova} categoria(s) nova(s)</span>${semCat?`<span class="tag warn">⏳ ${semCat} sem categoria (ficarão como pendentes)</span>`:''}</div>
+  <h4 style="margin:10px 0 4px">Contas / cartões (${fkeys.length})</h4>
+  <div class="tblwrap" style="max-height:22vh"><table><thead><tr><th class="l">No CSV</th><th class="l">No app</th></tr></thead><tbody>${fonteRows||'<tr><td class="l mut" colspan="2">nenhuma</td></tr>'}</tbody></table></div>
+  <h4 style="margin:12px 0 4px">Categorias (${ckeys.length})</h4>
+  <div class="tblwrap" style="max-height:30vh"><table><thead><tr><th class="l">No CSV</th><th class="l">No app</th><th class="l">Tipo (se criar)</th></tr></thead><tbody>${catRows||'<tr><td class="l mut" colspan="3">nenhuma</td></tr>'}</tbody></table></div>
+  <div class="row" style="margin-top:12px"><button class="btn" id="mrCommit">Importar ${recs.length}</button><button class="btn ghost" onclick="fecharModal()">Cancelar</button></div>`);
+ document.querySelectorAll('select[data-ck]').forEach(s=>{s.onchange=()=>{const tp=document.querySelector(`select[data-ctipo="${s.dataset.ck}"]`);if(tp){tp.disabled=!!s.value;tp.style.opacity=s.value?'.4':'';}};});
+ document.getElementById('mrCommit').onclick=()=>{
+  const fMap={};fkeys.forEach((k,idx)=>{const s=document.querySelector(`select[data-fk="${idx}"]`);let target=s.value;if(!target){target=tituloCase(fonteMap[k].raw);if(!state.contas.some(c=>normKey(c)===normKey(target)))state.contas.push(target);}fMap[k]=target;});
+  const cMap={};ckeys.forEach((k,idx)=>{const s=document.querySelector(`select[data-ck="${idx}"]`);let target=s.value;if(!target){const nome=tituloCase(catMap[k].raw);const tipo=(document.querySelector(`select[data-ctipo="${idx}"]`)||{}).value||'despesa';const grupo=tipo==='receita'?'Receitas':(tipo==='transferencia'?'Transferências':'Outros (importado)');if(!state.categorias.some(c=>normKey(c.nome)===normKey(nome)))state.categorias.push({grupo,nome,tipo});target=nome;}cMap[k]=target;});
+  const catByName={};state.categorias.forEach(c=>catByName[c.nome]=c);
+  const existentes=new Set(state.transacoes.map(chaveDup));
+  let n=0,dup=0;const compsImp=[];
+  recs.forEach(r=>{
+   const fonte=normKey(r.fonte)?(fMap[normKey(r.fonte)]||r.fonte):'';
+   const categoria=normKey(r.categoria)?(cMap[normKey(r.categoria)]||null):null;
+   const cat=categoria?catByName[categoria]:null;
+   const tipo=(cat&&cat.tipo==='receita')?'receita':'despesa';
+   const t={id:uid(),data:r.data,comp:r.comp,fonte,descricao:r.descricao,valor:r.valor,tipo,categoria:categoria||null,obs:''};
+   const ck=chaveDup(t);if(existentes.has(ck)){dup++;return;}
+   state.transacoes.push(t);compsImp.push(r.comp);
+   if(categoria){const kk=normDesc(r.descricao);if(kk.length>=4&&!state.regras[kk])state.regras[kk]=categoria;}
+   n++;
+  });
+  if(compsImp.length){const freq={};compsImp.forEach(c=>freq[c]=(freq[c]||0)+1);const maisComum=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];state.ano=+maisComum.slice(0,4);fRea.mes='todos';fRea.cat='todas';fRea.fonte='todas';fRea.busca='';}
+  fecharModal();rerender();toast(`${n} lançamento(s) importado(s)${dup?', '+dup+' duplicado(s) pulado(s)':''} — exibindo ${state.ano}.`);
+ };
+}
 /* ================= LANÇAR (entrada rápida / celular) ================= */
 const hojeISO=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
 function renderLancar(){
