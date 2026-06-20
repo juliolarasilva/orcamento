@@ -503,46 +503,205 @@ function parseCSVInterativo(f){
  return new Promise(async(res)=>{
   const linhas=parseCSVlinhas(await lerTexto(f));
   if(linhas.length<2){toast('CSV vazio: '+f.name);return res([]);}
-  // detecta automaticamente colunas de data, valor e descrição
+  // detecta automaticamente colunas de data, valor, descrição e Débito/Crédito
   const nCols=Math.max(...linhas.map(l=>l.length));
-  const amostra=linhas.slice(0,Math.min(linhas.length,30));
-  const scoreData=[],scoreVal=[];
-  for(let c=0;c<nCols;c++){let d=0,v=0;amostra.forEach(l=>{const cell=(l[c]||'').trim();if(parseDataBR(cell))d++;const pv=parseValorBR(cell);if(pv!==null&&/\d/.test(cell)&&!parseDataBR(cell))v++;});scoreData[c]=d;scoreVal[c]=v;}
+  const amostra=linhas.slice(1,Math.min(linhas.length,31));
+  const dcDe=s=>{const t=String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');if(/^D(EB|$)/.test(t))return 'D';if(/^C(RE|$)/.test(t))return 'C';return '';};
+  const semSufixo=s=>String(s||'').trim().replace(/\s*[DCdc]\s*$/,'');
+  const scoreData=[],scoreVal=[],scoreDC=[];
+  for(let c=0;c<nCols;c++){let d=0,v=0,dc=0;amostra.forEach(l=>{const cell=(l[c]||'').trim();if(parseDataBR(cell))d++;const pv=parseValorBR(semSufixo(cell));if(pv!==null&&/\d/.test(cell)&&!parseDataBR(cell))v++;if(cell&&dcDe(cell)&&!/\d/.test(cell))dc++;});scoreData[c]=d;scoreVal[c]=v;scoreDC[c]=dc;}
   const colData=scoreData.indexOf(Math.max(...scoreData));
   let colVal=-1,best=-1;for(let c=0;c<nCols;c++){if(c!==colData&&scoreVal[c]>best){best=scoreVal[c];colVal=c;}}
+  let colDC=-1,minDC=Math.max(2,Math.floor(amostra.length*0.5));for(let c=0;c<nCols;c++){if(c===colData||c===colVal)continue;if(scoreDC[c]>=minDC&&scoreDC[c]>(colDC<0?0:scoreDC[colDC])){colDC=c;}}
   // descrição: coluna de texto mais longa
-  let colDesc=-1,bestLen=-1;for(let c=0;c<nCols;c++){if(c===colData||c===colVal)continue;const len=amostra.reduce((s,l)=>s+((l[c]||'').replace(/[\d.,\/\-]/g,'').trim().length),0);if(len>bestLen){bestLen=len;colDesc=c;}}
-  const opts=n=>Array.from({length:nCols},(_,i)=>`<option value="${i}" ${i===n?'selected':''}>Coluna ${i+1}: ${esc((linhas[0][i]||'').slice(0,22))}</option>`).join('');
+  let colDesc=-1,bestLen=-1;for(let c=0;c<nCols;c++){if(c===colData||c===colVal||c===colDC)continue;const len=amostra.reduce((s,l)=>s+((l[c]||'').replace(/[\d.,\/\-]/g,'').trim().length),0);if(len>bestLen){bestLen=len;colDesc=c;}}
+  const opts=(n,nen)=>(nen?`<option value="-1" ${n<0?'selected':''}>— nenhuma (usar o sinal) —</option>`:'')+Array.from({length:nCols},(_,i)=>`<option value="${i}" ${i===n?'selected':''}>Coluna ${i+1}: ${esc((linhas[0][i]||'').slice(0,22))}</option>`).join('');
   modal(`<h3>Mapear colunas do CSV — ${esc(f.name)}</h3>
    <div class="row" style="margin-bottom:12px">
-    <label>Data <select id="cData">${opts(colData)}</select></label>
-    <label>Descrição <select id="cDesc">${opts(colDesc)}</select></label>
-    <label>Valor <select id="cVal">${opts(colVal)}</select></label>
+    <label>Data <select id="cData">${opts(colData,false)}</select></label>
+    <label>Descrição <select id="cDesc">${opts(colDesc,false)}</select></label>
+    <label>Valor <select id="cVal">${opts(colVal,false)}</select></label>
+    <label>Débito/Crédito <select id="cDC">${opts(colDC,true)}</select></label>
     <label><input type="checkbox" id="cHead" checked> 1ª linha é cabeçalho</label></div>
+   <p class="muted-sm" style="margin:-4px 0 10px">Saída/entrada: <b>valor negativo = saída</b>, positivo = entrada. Havendo coluna ou sufixo <b>D/C</b>, <b>D = saída</b> e <b>C = entrada</b> (tem prioridade sobre o sinal).</p>
    <div class="tblwrap" style="max-height:300px"><table><tbody>${linhas.slice(0,8).map(l=>'<tr>'+Array.from({length:nCols},(_,i)=>`<td class="l">${esc((l[i]||'').slice(0,28))}</td>`).join('')+'</tr>').join('')}</tbody></table></div>
    <div class="row" style="margin-top:14px"><button class="btn" id="cOk">Continuar</button><button class="btn ghost" id="cCancel">Cancelar</button></div>`);
   document.getElementById('cCancel').onclick=()=>{fecharModal();res([]);};
   document.getElementById('cOk').onclick=()=>{
-   const cd=+document.getElementById('cData').value,cde=+document.getElementById('cDesc').value,cv=+document.getElementById('cVal').value;
+   const cd=+document.getElementById('cData').value,cde=+document.getElementById('cDesc').value,cv=+document.getElementById('cVal').value,cdc=+document.getElementById('cDC').value;
    const inicio=document.getElementById('cHead').checked?1:0;
    const regs=[];
    linhas.slice(inicio).forEach(l=>{
-    const data=parseDataBR(l[cd]),v=parseValorBR(l[cv]);
+    const data=parseDataBR(l[cd]);
+    const bruto=cv>=0?(l[cv]||''):'';
+    const v=parseValorBR(semSufixo(bruto));
     if(!data||v===null||v===0)return;
-    regs.push({data,descricao:(l[cde]||'(sem descrição)').trim(),valor:Math.abs(v),tipo:v<0?'despesa':'receita'});});
+    let dc=cdc>=0?dcDe(l[cdc]):'';
+    if(!dc){const ms=String(bruto).trim().match(/([DCdc])\s*$/);if(ms)dc=dcDe(ms[1]);}
+    const tipo=dc==='C'?'receita':(dc==='D'?'despesa':(v<0?'despesa':'receita'));
+    regs.push({data,descricao:(l[cde]||'(sem descrição)').trim(),valor:Math.abs(v),tipo});});
    fecharModal();res(regs);};});}
+/* Parser posicional de EXTRATO bancário em PDF (itens {x,y,w,s} do pdf.js).
+   Trata: sinal de menos, sinal (+)/(-) após o número, e colunas Crédito/Débito separadas. */
+function extrairExtrato(pages){
+ const DATE=/^\d{2}\/\d{2}\/\d{4}$/;
+ const MONEY=/^-?(R\$\s*)?\d{1,3}(\.\d{3})*,\d{2}$/;
+ const PAREN=/\(\s*([+\-])\s*\)/;
+ const norm=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'');
+ const pvBR=s=>{s=String(s||'');const neg=/-/.test(s.replace(/\(.*?\)/g,''));const x=parseFloat(s.replace(/[^\d,]/g,'').replace(/\./g,'').replace(',','.'));return isNaN(x)?null:(neg?-x:x);};
+ const SKIP=/SALDO|TOTAL|EXTRATOINEXISTENTE|COD\.?LANC/;
+ const STOP=/INFORMACOESADICIONAIS|INFORMACOESCOMPLEMENTARES|LANCAMENTOSFUTUROS|SALDODACONTACORRENTE/;
+ const HDRJUNK=/\bAGENCIA\b|\bCONTA\b|\bHISTORICO\b|BRADESCOCELULAR|EXTRATODE|\bPERIODO\b|\bNOME\b|\bFOLHA\b|\bDOCTO\b|RAZAOSOCIAL|\bCNPJ\b|\bEMITIDO\b|\bCLIENTE\b/;
+ let cols={},mode=null,paren=false,have=false;
+ const out=[];
+ const right=it=>it.x+(it.w||0);
+ pages.forEach(items=>{
+  if(!items||!items.length)return;
+  const byY={};
+  items.forEach(it=>{const k=Math.round(it.y/2)*2;(byY[k]=byY[k]||[]).push(it);});
+  const lines=Object.keys(byY).map(Number).sort((a,b)=>b-a).map(k=>byY[k].slice().sort((a,b)=>a.x-b.x));
+  if(!have){
+   for(const ln of lines){
+    const N=norm(ln.map(i=>i.s).join(''));
+    if(N.includes('CREDITO')&&N.includes('DEBITO')){
+     mode='CD';
+     ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('CREDITO'))cols.C=right(i);if(s.startsWith('DEBITO'))cols.D=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('HISTORICO'))cols.H=i.x;});
+     have=true;break;
+    }
+    if(N.includes('VALOR')&&(N.includes('SALDO')||N.includes('HISTORICO')||N.includes('LANCAMENTOS'))){
+     mode='V';
+     ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('VALOR'))cols.V=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('LANCAMENTOS')||s.startsWith('HISTORICO'))cols.H=i.x;});
+     have=true;break;
+    }
+   }
+  }
+  if(!have)return;
+  if(items.some(i=>PAREN.test(i.s)))paren=true;
+  const valKeys=['V','C','D'].filter(k=>cols[k]!=null);
+  if(!valKeys.length)return;
+  const valleft=Math.min(...valKeys.map(k=>cols[k]));
+  const hist=cols.H!=null?cols.H:80;
+  const meta=lines.map(ln=>{
+   const txt=ln.map(i=>i.s).join(' ');
+   const dateItem=ln.find(i=>DATE.test(i.s.trim()));
+   const nums=ln.filter(i=>MONEY.test(i.s.trim().replace(/\s*\(\s*[+\-]\s*\)$/,'')));
+   const ht=ln.filter(i=>{const s=i.s.trim();return !DATE.test(s)&&!MONEY.test(s.replace(/\s*\(\s*[+\-]\s*\)$/,''))&&!/^\(\s*[+\-]\s*\)$/.test(s)&&i.x>=hist-4&&i.x<valleft-5;}).map(i=>i.s).join(' ').trim();
+   return {ln,N:norm(txt),date:dateItem?dateItem.s.trim():null,nums,ht};
+  });
+  let curdate=null,stop=false;
+  const usable=j=>j>=0&&j<meta.length&&!meta[j].nums.length&&!meta[j].date&&!HDRJUNK.test(meta[j].N)&&!SKIP.test(meta[j].N);
+  meta.forEach((m,i)=>{
+   if(STOP.test(m.N))stop=true;
+   if(stop)return;
+   if(m.date)curdate=m.date;
+   if(!m.nums.length||!curdate||SKIP.test(m.N))return;
+   let val=null,tipo=null;
+   if(mode==='CD'){
+    for(const it of m.nums){const xc=right(it),dC=Math.abs(xc-cols.C),dD=Math.abs(xc-cols.D),dS=cols.S!=null?Math.abs(xc-cols.S):1e9;
+     if(dC<dD&&dC<dS){val=pvBR(it.s);tipo='receita';break;}
+     if(dD<dS){val=pvBR(it.s);tipo='despesa';break;}}
+   }else{
+    const cand=m.nums.filter(it=>cols.S==null||Math.abs(right(it)-cols.V)<=Math.abs(right(it)-cols.S));
+    if(cand.length){const it=cand[0];val=pvBR(it.s);
+     if(paren){const sg=m.ln.map(x=>x.s).join(' ').match(PAREN);tipo=sg?(sg[1]==='+'?'receita':'despesa'):(val<0?'despesa':'receita');}
+     else tipo=val<0?'despesa':'receita';}
+   }
+   if(val==null||val===0)return;
+   const above=usable(i-1)?meta[i-1].ht:'';
+   const own=!HDRJUNK.test(m.N)?m.ht:'';
+   const parts=own?[above,own]:[above,(usable(i+1)?meta[i+1].ht:'')];
+   const desc=(parts.filter(Boolean).join(' ').replace(/\s+/g,' ').replace(/^\d{4,}\s+/,'').replace(/\b\d{2}:\d{2}\b/g,'').replace(/\s+/g,' ').trim().slice(0,70))||'(sem descrição)';
+   const data=`${curdate.slice(6,10)}-${curdate.slice(3,5)}-${curdate.slice(0,2)}`;
+   out.push({data,descricao:desc,valor:Math.abs(val),tipo});
+  });
+ });
+ return out;
+}
+/* Parser posicional de FATURA de cartao (itens {x,y,w,s} do pdf.js).
+   Latam: 2 colunas, credito com '-' antes do valor, secao 'proximas faturas' excluida.
+   Caixa: coluna unica, sufixo D/C no valor, parcelas atuais incluidas.
+   Saida: tipo 'despesa' com credito/estorno negativo (reduz a categoria). */
+function extrairFatura(pages){
+ const DATEMM=/^\d{2}\/\d{2}$/;
+ const MONEY=/^-?\d{1,3}(\.\d{3})*,\d{2}$/;
+ const MONEYDC=/^-?\d{1,3}(\.\d{3})*,\d{2}[DC]$/;
+ const DATEFULL=/(\d{2})\/(\d{2})\/(\d{4})/;
+ const norm=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'');
+ const isMoney=s=>MONEY.test(s)||MONEYDC.test(s);
+ const pv=s=>{let dc='';s=String(s).trim();if(/[DC]$/.test(s)){dc=s.slice(-1);s=s.slice(0,-1);}const neg=/^-/.test(s);const x=parseFloat(s.replace(/[^\d,]/g,'').replace(/\./g,'').replace(',','.'));if(isNaN(x))return null;if(dc==='C')return -Math.abs(x);if(dc==='D')return Math.abs(x);return neg?-x:x;};
+ const mergeLinha=ws=>{const r=[];for(let i=0;i<ws.length;i++){let it={...ws[i]};
+   if(it.s==='-'&&ws[i+1]&&MONEY.test(ws[i+1].s)&&(ws[i+1].x-(it.x+(it.w||0)))<12){it={...ws[i+1],s:'-'+ws[i+1].s,x:it.x};i++;}
+   else if(MONEY.test(it.s)&&ws[i+1]&&/^[DC]$/.test(ws[i+1].s)&&(ws[i+1].x-(it.x+(it.w||0)))<12){it={...it,s:it.s+ws[i+1].s};i++;}
+   r.push(it);}return r;};
+ const linhasDe=items=>{const byY={};items.forEach(it=>{const k=Math.round(it.y/2)*2;(byY[k]=byY[k]||[]).push(it);});return Object.keys(byY).map(Number).sort((a,b)=>b-a).map(k=>mergeLinha(byY[k].slice().sort((a,b)=>a.x-b.x)));};
+ // vencimento (para inferir o ano): primeiro dd/mm/aaaa apos a palavra "Vencimento", senao o 1o dd/mm/aaaa
+ let venc=null;
+ for(const p of pages){for(let i=0;i<p.length;i++){if(/VENCIMENTO/.test(norm(p[i].s))){for(let j=i;j<Math.min(i+6,p.length);j++){const m=String(p[j].s).match(DATEFULL);if(m){venc={m:+m[2],y:+m[3]};break;}}}if(venc)break;}if(venc)break;}
+ if(!venc){for(const p of pages){for(const it of p){const m=String(it.s).match(DATEFULL);if(m){venc={m:+m[2],y:+m[3]};break;}}if(venc)break;}}
+ const ref=venc||{m:new Date().getMonth()+1,y:new Date().getFullYear()};
+ // modo Caixa = ha valor com sufixo D/C (apos juntar tokens separados)
+ let modoCaixa=false;
+ pages.forEach(items=>{linhasDe(items).forEach(ws=>{if(ws.some(w=>MONEYDC.test(w.s)))modoCaixa=true;});});
+ const out=[];
+ if(modoCaixa){
+  const SKIP=/TOTALDAFATURA|OBRIGADOPELO|^TOTAL|SALDOANTERIOR|VALORTOTALDESTA|PAGAMENTOEFETUADO|^CREDITO\/DEBITO|FATORCONVERSAO|^PONTOS|BONIFICA/;
+  let curdate=null;
+  pages.forEach(items=>{linhasDe(items).forEach(ws=>{
+   if(!ws.length)return;
+   ws.forEach(w=>{
+    if(!isMoney(w.s))return;const v=pv(w.s);if(v==null||v===0)return;
+    let dtok=null;ws.forEach(x=>{if(x.x<w.x&&DATEMM.test(x.s))dtok=x;});
+    if(dtok)curdate=dtok.s;
+    if(!curdate)return;
+    const dx=dtok?dtok.x:-1e9;
+    const estab=ws.filter(x=>x.x>dx&&x.x<w.x&&!DATEMM.test(x.s)&&!isMoney(x.s)).map(x=>x.s).join(' ').replace(/\s+/g,' ').trim();
+    if(SKIP.test(norm(estab)))return;
+    out.push({data:curdate,descricao:estab.slice(0,55)||'(sem descricao)',valor:v});
+   });
+  });});
+ }else{
+  const STOPFUT=/COMPRASPARCELADAS|PROXIMASFATURAS|SIMULACAO|LIMITES|SEGURO|DEMONSTRATIVO/;
+  const SKIPDESC=/LANCAMENTOSNOCARTAO|VALOREMR\$|^DATA|\(FINAL|PRODUTOS\/SERVICOS|^TOTAL/;
+  let skipfut=false;
+  pages.forEach(items=>{const linhas=linhasDe(items);
+   [[120,360],[360,9999]].forEach(([lo,hi])=>{let prev=null;
+    linhas.forEach(allw=>{
+     const ws=allw.filter(w=>w.x>=lo&&w.x<hi);if(!ws.length)return;
+     const N=norm(ws.map(i=>i.s).join(''));
+     if(STOPFUT.test(N)){skipfut=true;prev=null;return;}
+     if(skipfut)return;
+     const date=ws.find(w=>DATEMM.test(w.s));
+     if(date){const vt=ws.find(w=>isMoney(w.s)&&w.x>date.x);
+      if(vt){const v=pv(vt.s);
+       const estab=ws.filter(w=>!DATEMM.test(w.s)&&!isMoney(w.s)&&w.x>date.x&&w.x<vt.x).map(w=>w.s).join(' ').replace(/\s+/g,' ').trim().slice(0,55);
+       const o={data:date.s,descricao:estab||'(sem descricao)',valor:v};out.push(o);prev=o;return;}}
+     if(prev&&!ws.some(w=>isMoney(w.s))&&!SKIPDESC.test(N)){prev.descricao=(prev.descricao+' '+ws.map(w=>w.s).join(' ')).replace(/\s+/g,' ').trim().slice(0,55);}
+    });
+   });
+  });
+ }
+ // aplica ano (dd/mm -> aaaa-mm-dd) e converte para a saida do app
+ return out.map(o=>{let data=o.data;
+  if(/^\d{2}\/\d{2}$/.test(data)){const mm=+data.slice(3,5);const y=mm<=ref.m?ref.y:ref.y-1;data=y+'-'+data.slice(3,5)+'-'+data.slice(0,2);}
+  return {data,descricao:o.descricao,valor:o.valor,tipo:'despesa'};
+ });
+}
 async function parsePDF(f){
  if(typeof pdfjsLib==='undefined')throw new Error('Leitor de PDF indisponível (precisa de internet na 1ª vez).');
  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
  const buf=await f.arrayBuffer();
  const doc=await pdfjsLib.getDocument({data:buf}).promise;
- const linhas=[];
+ const paginasItens=[],linhas=[];
  for(let p=1;p<=doc.numPages;p++){
   const page=await doc.getPage(p);
   const tc=await page.getTextContent();
-  const items=tc.items.map(it=>({x:it.transform[4],y:it.transform[5],s:it.str})).filter(i=>i.s.trim()!=='');
-  extrairLinhasColunas(items).forEach(l=>linhas.push(l));
+  const itens=tc.items.map(it=>({x:it.transform[4],y:it.transform[5],w:it.width,s:it.str})).filter(i=>i.s.trim()!=='');
+  paginasItens.push(itens);
+  extrairLinhasColunas(itens).forEach(l=>linhas.push(l));
  }
+ // 1º fatura de cartão (datas dd/mm); depois extrato (dd/mm/aaaa); senão leitor antigo
+ try{const rf=extrairFatura(paginasItens);if(rf&&rf.length)return rf;}catch(e){console.warn('fatura pdf:',e);}
+ try{const regs=extrairExtrato(paginasItens);if(regs&&regs.length)return regs;}catch(e){console.warn('extrato pdf:',e);}
  return parseLinhasFatura(linhas);
 }
 /* Faturas como a do Itaú têm 2 colunas de lançamentos por página.
