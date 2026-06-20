@@ -379,22 +379,26 @@ function modalExcluirMes(){
  const anos=anosDisponiveis();
  const anoSel=state.ano;
  const mesSel=(fRea.mes!=='todos')?fRea.mes:String(new Date().getMonth()+1).padStart(2,'0');
- const resumo=(ano,mes)=>{const comp=ano+'-'+mes;const ts=state.transacoes.filter(t=>t.comp===comp);const cls=ts.filter(t=>t.categoria).length;return {n:ts.length,cls,pen:ts.length-cls};};
+ const fonteSel=(fRea.fonte&&fRea.fonte!=='todas')?fRea.fonte:'todas';
+ const resumo=(ano,mes,fonte)=>{const comp=ano+'-'+mes;const ts=state.transacoes.filter(t=>t.comp===comp&&(fonte==='todas'||t.fonte===fonte));const cls=ts.filter(t=>t.categoria).length;return {n:ts.length,cls,pen:ts.length-cls};};
  modal(`<h3>🗑 Excluir lançamentos de um mês</h3>
-  <p class="muted-sm">Remove <b>todos os lançamentos do realizado</b> da competência escolhida (classificados e pendentes). Não afeta orçamento, anotações nem os demais meses.</p>
+  <p class="muted-sm">Remove <b>os lançamentos do realizado</b> da competência e fonte escolhidas (classificados e pendentes). Não afeta orçamento, anotações nem os demais meses.</p>
   <div class="row" style="margin:10px 0">
    <label>Ano <select id="emAno">${anos.map(a=>`<option ${a===anoSel?'selected':''}>${a}</option>`).join('')}</select></label>
    <label>Mês <select id="emMes">${MESES_FULL.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${String(i+1).padStart(2,'0')===mesSel?'selected':''}>${m}</option>`).join('')}</select></label>
+   <label>Fonte <select id="emFonte"><option value="todas" ${fonteSel==='todas'?'selected':''}>Todas as fontes</option>${state.contas.map(c=>`<option ${c===fonteSel?'selected':''}>${esc(c)}</option>`).join('')}</select></label>
   </div>
   <div id="emResumo" class="tag warn" style="display:inline-block"></div>
   <div class="row" style="margin-top:14px"><button class="btn danger" id="emOk">Excluir</button><button class="btn ghost" onclick="fecharModal()">Cancelar</button></div>`);
- const upd=()=>{const ano=+document.getElementById('emAno').value,mes=document.getElementById('emMes').value;const r=resumo(ano,mes);const b=document.getElementById('emOk');document.getElementById('emResumo').textContent=r.n?`${r.n} lançamento(s) serão excluídos (${r.cls} classificado(s), ${r.pen} pendente(s))`:'Nenhum lançamento nesse mês';b.disabled=!r.n;b.style.opacity=r.n?'':'.4';};
- document.getElementById('emAno').onchange=upd;document.getElementById('emMes').onchange=upd;upd();
+ const upd=()=>{const ano=+document.getElementById('emAno').value,mes=document.getElementById('emMes').value,fonte=document.getElementById('emFonte').value;const r=resumo(ano,mes,fonte);const b=document.getElementById('emOk');document.getElementById('emResumo').textContent=r.n?`${r.n} lançamento(s) serão excluídos (${r.cls} classificado(s), ${r.pen} pendente(s))`:'Nenhum lançamento nesse filtro';b.disabled=!r.n;b.style.opacity=r.n?'':'.4';};
+ ['emAno','emMes','emFonte'].forEach(id=>document.getElementById(id).onchange=upd);upd();
  document.getElementById('emOk').onclick=()=>{
-  const ano=+document.getElementById('emAno').value,mes=document.getElementById('emMes').value,comp=ano+'-'+mes;
-  const n=state.transacoes.filter(t=>t.comp===comp).length;if(!n)return;
-  if(!confirm(`Excluir definitivamente ${n} lançamento(s) de ${MESES_FULL[+mes-1]}/${ano}? Esta ação não pode ser desfeita.`))return;
-  state.transacoes=state.transacoes.filter(t=>t.comp!==comp);
+  const ano=+document.getElementById('emAno').value,mes=document.getElementById('emMes').value,fonte=document.getElementById('emFonte').value,comp=ano+'-'+mes;
+  const alvo=t=>t.comp===comp&&(fonte==='todas'||t.fonte===fonte);
+  const n=state.transacoes.filter(alvo).length;if(!n)return;
+  const ondeFonte=fonte==='todas'?'todas as fontes':fonte;
+  if(!confirm(`Excluir definitivamente ${n} lançamento(s) de ${MESES_FULL[+mes-1]}/${ano} (${ondeFonte})? Esta ação não pode ser desfeita.`))return;
+  state.transacoes=state.transacoes.filter(t=>!alvo(t));
   fecharModal();rerender();toast(`${n} lançamento(s) de ${MESES_FULL[+mes-1]}/${ano} excluído(s).`);};
 }
 /* ================= REAL ANUAL (grade categoria × meses) ================= */
