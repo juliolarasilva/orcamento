@@ -143,7 +143,7 @@ function migrarSeed(){
 /* ================= UTILS ================= */
 const fmtBRL=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const fmt=v=>fmtBRL.format(v||0);
-const fmtK=v=>fmtBRL.format(v||0).replace(/,\d\d$/,'');
+const fmtK=v=>fmtBRL.format(v||0);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const normDesc=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\d+/g,'').replace(/[^A-Z ]/g,' ').replace(/\s+/g,' ').trim();
