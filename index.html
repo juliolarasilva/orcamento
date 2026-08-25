@@ -122,13 +122,24 @@ const SEED_CATS=(()=>{const d=[
  ['Transferências','transferencia',['Transferência entre contas','Pagamento de Fatura']]
 ];const out=[];d.forEach(([g,t,items])=>items.forEach(n=>out.push({grupo:g,nome:n,tipo:t})));return out;})();
 const SEED_CONTAS=['Conta Itaú','Conta Caixa','Conta Bradesco','Conta Brasil','Conta Santander','Cartão Caixa Elo','Cartão Brasil','Cartão Bradesco'];
+const SEED_VERSAO=1; // ⬆ incremente ao alterar SEED_CATS/SEED_CONTAS para propagar a todos
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{}};}
+function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[]};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};migrarSeed();return;}}catch(e){}state=novoEstado();}
+function migrarSeed(){
+ if(!state.seedRemovidos)state.seedRemovidos=[];
+ if((state.seedVersao||0)>=SEED_VERSAO)return;
+ const rem=new Set(state.seedRemovidos);
+ let n=0;
+ SEED_CATS.forEach(c=>{if(!state.categorias.some(x=>x.nome===c.nome)&&!rem.has('cat:'+c.nome)){state.categorias.push({grupo:c.grupo,nome:c.nome,tipo:c.tipo});n++;}});
+ SEED_CONTAS.forEach(c=>{if(!state.contas.includes(c)&&!rem.has('conta:'+c)){state.contas.push(c);n++;}});
+ state.seedVersao=SEED_VERSAO;
+ if(n)setTimeout(()=>toast(n+' novo(s) item(ns) padrão adicionado(s) pela atualização do app.'),800);
+}
 /* ================= UTILS ================= */
 const fmtBRL=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const fmt=v=>fmtBRL.format(v||0);
@@ -1181,6 +1192,11 @@ function mesclarEstados(remoto){
  (remoto.anotacoes||[]).forEach(a=>{if(!aids.has(a.id))state.anotacoes.push(a);});
  (remoto.categorias||[]).forEach(c=>{if(!catPorNome(c.nome))state.categorias.push(c);});
  (remoto.contas||[]).forEach(c=>{if(!state.contas.includes(c))state.contas.push(c);});
+ if(!state.seedRemovidos)state.seedRemovidos=[];
+ (remoto.seedRemovidos||[]).forEach(r=>{if(!state.seedRemovidos.includes(r))state.seedRemovidos.push(r);});
+ state.categorias=state.categorias.filter(c=>!state.seedRemovidos.includes('cat:'+c.nome)||!SEED_CATS.some(s=>s.nome===c.nome)||state.transacoes.some(t=>t.categoria===c.nome));
+ state.seedVersao=Math.max(state.seedVersao||0,remoto.seedVersao||0);
+ migrarSeed();
  return n;
 }
 async function driveSincronizar(interativo){
@@ -1229,9 +1245,9 @@ function renderConfig(){
  el.querySelector('#cfgImp').onclick=importarBackup;
  el.querySelector('#cfgCSV').onclick=exportarCSV;
  el.querySelector('#cfgAddConta').onclick=()=>{const v=el.querySelector('#cfgNovaConta').value.trim();if(v&&!state.contas.includes(v)){state.contas.push(v);rerender();}};
- el.querySelectorAll('button[data-delconta]').forEach(b=>{b.onclick=()=>{state.contas.splice(+b.dataset.delconta,1);rerender();};});
+ el.querySelectorAll('button[data-delconta]').forEach(b=>{b.onclick=()=>{const nome=state.contas[+b.dataset.delconta];if(SEED_CONTAS.includes(nome)&&!state.seedRemovidos.includes('conta:'+nome))state.seedRemovidos.push('conta:'+nome);state.contas.splice(+b.dataset.delconta,1);rerender();};});
  el.querySelectorAll('button[data-delregra]').forEach(b=>{b.onclick=()=>{delete state.regras[b.dataset.delregra];rerender();};});
- el.querySelectorAll('button[data-delcat]').forEach(b=>{b.onclick=()=>{const n=b.dataset.delcat;const usos=state.transacoes.filter(t=>t.categoria===n).length;if(!confirm(`Excluir a linha "${n}"?`+(usos?` ${usos} lançamento(s) ficarão sem categoria.`:'')))return;state.categorias=state.categorias.filter(c=>c.nome!==n);state.transacoes.forEach(t=>{if(t.categoria===n)t.categoria=null;});rerender();};});
+ el.querySelectorAll('button[data-delcat]').forEach(b=>{b.onclick=()=>{const n=b.dataset.delcat;const usos=state.transacoes.filter(t=>t.categoria===n).length;if(!confirm(`Excluir a linha "${n}"?`+(usos?` ${usos} lançamento(s) ficarão sem categoria.`:'')))return;if(SEED_CATS.some(s=>s.nome===n)&&!state.seedRemovidos.includes('cat:'+n))state.seedRemovidos.push('cat:'+n);state.categorias=state.categorias.filter(c=>c.nome!==n);state.transacoes.forEach(t=>{if(t.categoria===n)t.categoria=null;});rerender();};});
  el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});rerender();};});
  el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});rerender();};
  el.querySelector('#cfgLimparTrans').onclick=()=>{if(confirm('Apagar TODOS os lançamentos? O orçamento será mantido.')){state.transacoes=[];rerender();}};
@@ -1249,6 +1265,7 @@ carregar();salvarTimestamp();renderPainel();
 document.getElementById('driveStatus').onclick=()=>driveSincronizar(true);
 if(state.driveClientId){driveStatus('clique para conectar');driveSincronizar(false);}
 window.addEventListener('beforeunload',salvar);
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
 </html>
