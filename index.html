@@ -74,6 +74,7 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
     <button data-tab="importacao">Importação</button>
     <button data-tab="realizado">Realizado</button>
     <button data-tab="realanual">Real Anual</button>
+    <button data-tab="saldos">Saldos</button>
     <button data-tab="config">Configurações</button>
   </nav>
 </header>
@@ -84,6 +85,7 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
   <div id="tab-importacao" class="hide"></div>
   <div id="tab-realizado" class="hide"></div>
   <div id="tab-realanual" class="hide"></div>
+  <div id="tab-saldos" class="hide"></div>
   <div id="tab-config" class="hide"></div>
 </main>
 <div id="modalBg" class="modal-bg hide"><div class="modal" id="modalBox"></div></div>
@@ -116,10 +118,10 @@ const SEED_CONTAS=['Conta Itaú','Conta Caixa','Conta Bradesco','Conta Brasil','
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{}};}
+function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{}};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};return;}}catch(e){}state=novoEstado();}
 /* ================= UTILS ================= */
 const fmtBRL=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const fmt=v=>fmtBRL.format(v||0);
@@ -137,7 +139,7 @@ function orcGet(ano,cat){const a=state.orcamento[ano];if(!a||!a[cat])return Arra
 function orcSet(ano,cat,mes,val){if(!state.orcamento[ano])state.orcamento[ano]={};if(!state.orcamento[ano][cat])state.orcamento[ano][cat]=Array(12).fill(0);state.orcamento[ano][cat][mes]=val;}
 function realPorCatMes(ano){const out={};state.transacoes.forEach(t=>{if(!t.comp)return;const[y,m]=t.comp.split('-').map(Number);if(y!==ano)return;const cat=t.categoria||'__sem__';if(!out[cat])out[cat]=Array(12).fill(0);out[cat][m-1]+=t.valor;});return out;}
 /* ================= NAVEGAÇÃO ================= */
-const TABS={painel:renderPainel,lancar:renderLancar,orcamento:renderOrcamento,importacao:renderImportacao,realizado:renderRealizado,realanual:renderRealAnual,config:renderConfig};
+const TABS={painel:renderPainel,lancar:renderLancar,orcamento:renderOrcamento,importacao:renderImportacao,realizado:renderRealizado,realanual:renderRealAnual,saldos:renderSaldos,config:renderConfig};
 let tabAtiva='painel';
 function irParaAba(nome){tabAtiva=nome;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x.dataset.tab===nome));Object.keys(TABS).forEach(k=>document.getElementById('tab-'+k).classList.toggle('hide',k!==nome));TABS[nome]();}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>irParaAba(b.dataset.tab));
@@ -156,6 +158,84 @@ function movimentoContas(comp){
   if(!ccs.includes(t.fonte))return;
   if(t.tipo==='receita')e+=t.valor;else s+=t.valor;});
  return {e,s};
+}
+function movimentoConta(comp,conta){let e=0,s=0;state.transacoes.forEach(t=>{if(!t.data||t.data.slice(0,7)!==comp)return;if(t.fonte!==conta)return;if(t.tipo==='receita')e+=t.valor;else s+=t.valor;});return{e,s};}
+function resumoSaldos(ano,mes){
+ const mm=String(mes+1).padStart(2,'0'),comp=`${ano}-${mm}`;
+ const compAnt=mes===0?`${ano-1}-12`:`${ano}-${String(mes).padStart(2,'0')}`;
+ const ccs=contasCorrentes();
+ let totAnt=0,totAtu=0,faltaAnt=0,faltaAtu=0,e=0,s=0,nDif=0;
+ ccs.forEach(c=>{const va=saldoGet(compAnt,c),vb=saldoGet(comp,c);
+  if(va==null)faltaAnt++;else totAnt+=va;
+  if(vb==null)faltaAtu++;else totAtu+=vb;
+  const m=movimentoConta(comp,c);e+=m.e;s+=m.s;
+  if(va!=null&&vb!=null&&Math.abs(vb-(va+m.e-m.s))>=0.01)nDif++;});
+ const esperado=totAnt+e-s,dif=totAtu-esperado;
+ return {comp,compAnt,ccs,totAnt,totAtu,faltaAnt,faltaAtu,e,s,esperado,dif,nDif,completo:!faltaAnt&&!faltaAtu&&ccs.length>0,fecha:Math.abs(dif)<0.01};
+}
+/* ================= SALDOS (conciliação por conta) ================= */
+function renderSaldos(){
+ const ano=state.ano,mes=state.mes;
+ const R=resumoSaldos(ano,mes);
+ const nomeAnt=mes===0?`Dez/${ano-1}`:`${MESES[mes-1]}/${ano}`;
+ let statusG;
+ if(!R.ccs.length)statusG='<span class="tag info">cadastre contas correntes em Configurações</span>';
+ else if(!R.completo)statusG='<span class="tag info">informe os saldos destacados</span>';
+ else statusG=R.fecha?'<span class="tag ok">✓ Conciliação do mês fecha</span>':`<span class="tag warn">⚠ ${R.nDif} conta(s) com diferença · total ${fmt(R.dif)}</span>`;
+ let h=`<div class="card"><div class="row" style="justify-content:space-between">
+  <div class="row" style="gap:8px"><button class="btn ghost" id="sldPrev" title="Mês anterior">←</button><b style="font-size:16px;min-width:150px;text-align:center">${MESES_FULL[mes]}/${ano}</b><button class="btn ghost" id="sldNext" title="Próximo mês">→</button></div>
+  ${statusG}
+ </div>
+ <p class="muted-sm" style="margin-top:8px">Confirme o saldo de fim de mês de cada conta corrente. O esperado = saldo de ${nomeAnt} + movimento dos extratos importados. Saldos do arquivo OFX entram sozinhos (🏦). Cartões ficam fora — a fatura afeta a conta via "Pagamento de Fatura".</p></div>`;
+ R.ccs.forEach(c=>{
+  const va=saldoGet(R.compAnt,c),vb=saldoGet(R.comp,c);
+  const m=movimentoConta(R.comp,c);
+  const temMov=(m.e||m.s)?true:false;
+  const esperado=va!=null?va+m.e-m.s:null;
+  const meta=(state.saldosMeta[R.comp]||{})[c];
+  const dif=(vb!=null&&esperado!=null)?vb-esperado:null;
+  let chip;
+  if(vb==null)chip=temMov?'<span class="tag warn">informe o saldo</span>':'<span class="tag info">sem movimento</span>';
+  else if(dif==null)chip=`<span class="tag info">informe ${nomeAnt} para conciliar</span>`;
+  else if(Math.abs(dif)<0.01)chip='<span class="tag ok">✓ conciliada</span>';
+  else chip=`<span class="tag warn">⚠ difere ${fmt(dif)}</span>`;
+  const origem=vb==null?'':(meta==='ofx'?'<div class="fonte-pill" style="margin-top:3px">🏦 do extrato OFX</div>':(meta==='auto'?'<div class="fonte-pill" style="margin-top:3px">= esperado (confirmado)</div>':'<div class="fonte-pill" style="margin-top:3px">✏️ digitado</div>'));
+  const inputSaldo=`<input class="num" style="width:100%;text-align:left;font-size:15px;font-weight:700;border:1px solid ${dif!=null&&Math.abs(dif)>=0.01?'var(--amber)':'#cbd5e1'};background:#fff;padding:6px 8px" data-sld="${esc(c)}" value="${vb!=null?String(vb.toFixed(2)).replace('.',','):''}" placeholder="${esperado!=null?String(esperado.toFixed(2)).replace('.',','):'0,00'}">`;
+  if(!temMov&&vb==null&&esperado==null){
+   h+=`<div class="card" style="opacity:.92"><div class="row"><b class="flex1">🏦 ${esc(c)}</b>${chip}<div style="width:140px">${inputSaldo}</div></div></div>`;
+   return;
+  }
+  h+=`<div class="card" style="${dif!=null&&Math.abs(dif)>=0.01?'border-color:var(--amber)':''}">
+   <div class="row" style="margin-bottom:10px"><b class="flex1" style="font-size:15px">🏦 ${esc(c)}</b>${chip}</div>
+   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+    <div style="background:#f8fafc;border-radius:8px;padding:10px;cursor:pointer" class="sldAntBox" title="Ir para ${nomeAnt}"><div class="muted-sm">Fim de ${nomeAnt}</div><b>${va!=null?fmt(va):'— informar'}</b></div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px" title="Entradas ${fmt(m.e)} · Saídas ${fmt(m.s)}"><div class="muted-sm">Movimento do mês</div><b class="${m.e-m.s>=0?'pos':'neg'}">${m.e-m.s>=0?'+':''}${fmt(m.e-m.s)}</b></div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px"><div class="muted-sm">Esperado</div><b>${esperado!=null?fmt(esperado):'—'}</b></div>
+    <div style="background:#f0fdfa;border-radius:8px;padding:10px"><div class="muted-sm">Saldo fim de ${MESES[mes]}/${ano}</div>${inputSaldo}${origem}
+     ${vb==null&&esperado!=null?`<button class="mini" data-useesp="${esc(c)}" style="color:var(--acc);margin-top:3px">⤵ usar esperado</button>`:''}</div>
+   </div></div>`;
+ });
+ h+=`<div class="card"><div class="row">
+  <span class="flex1 muted-sm">Total: ${R.faltaAnt?'anterior incompleto':fmt(R.totAnt)} + ${fmt(R.e)} − ${fmt(R.s)} = <b style="color:var(--ink)">${fmt(R.esperado)} esperado</b> · informado ${R.faltaAtu?'incompleto':fmt(R.totAtu)}</span>
+  ${R.completo?(R.fecha?'<span class="tag ok">✓ fecha</span>':`<span class="tag warn">diferença ${fmt(R.dif)}</span>`):''}
+ </div></div>`;
+ const el=document.getElementById('tab-saldos');el.innerHTML=h;
+ const nav=d=>{let m=state.mes+d,a=state.ano;if(m<0){m=11;a--;}if(m>11){m=0;a++;}state.mes=m;state.ano=a;rerender();};
+ el.querySelector('#sldPrev').onclick=()=>nav(-1);
+ el.querySelector('#sldNext').onclick=()=>nav(1);
+ el.querySelectorAll('.sldAntBox').forEach(x=>{x.onclick=()=>nav(-1);});
+ el.querySelectorAll('input[data-sld]').forEach(i=>{i.onchange=()=>{
+  const v=i.value.trim()===''?null:parseValorBR(i.value);
+  saldoSet(R.comp,i.dataset.sld,v);
+  if(!state.saldosMeta[R.comp])state.saldosMeta[R.comp]={};
+  if(v==null)delete state.saldosMeta[R.comp][i.dataset.sld];else state.saldosMeta[R.comp][i.dataset.sld]='manual';
+  rerender();};});
+ el.querySelectorAll('button[data-useesp]').forEach(b=>{b.onclick=()=>{
+  const c=b.dataset.useesp;const va=saldoGet(R.compAnt,c);const m=movimentoConta(R.comp,c);
+  saldoSet(R.comp,c,va+m.e-m.s);
+  if(!state.saldosMeta[R.comp])state.saldosMeta[R.comp]={};
+  state.saldosMeta[R.comp][c]='auto';
+  rerender();};});
 }
 /* ================= PAINEL (REAL x ORÇADO) ================= */
 function renderPainel(){
@@ -195,45 +275,15 @@ function renderPainel(){
   if(rm||ra)h+=`<tr class="grp"><td class="l" style="color:var(--amber)">⚠ Sem categoria</td><td>${fmt(rm)}</td><td>—</td><td>—</td><td>—</td><td style="border-left:2px solid var(--line)">${fmt(ra)}</td><td>—</td><td>—</td><td>—</td></tr>`;}
  h+=`<tr class="total"><td class="l">SALDO (Receitas − Despesas)</td>${celulas(saldoR,saldoO,'receita')}${celulas(saldoRA,saldoOA,'receita',true)}</tr>`;
  h+='</tbody></table></div>';
- // ---- Check de saldo das contas ----
- const mm2=String(mes+1).padStart(2,'0'),comp=`${ano}-${mm2}`;
- const compAnt=mes===0?`${ano-1}-12`:`${ano}-${String(mes).padStart(2,'0')}`;
- const nomeAnt=mes===0?`Dez/${ano-1}`:`${MESES[mes-1]}/${ano}`;
- const ccs=contasCorrentes();
- let totAnt=0,totAtu=0,faltaAnt=0,faltaAtu=0;
- const linhasS=ccs.map(c=>{
-  const va=saldoGet(compAnt,c),vb=saldoGet(comp,c);
-  if(va==null)faltaAnt++;else totAnt+=va;
-  if(vb==null)faltaAtu++;else totAtu+=vb;
-  return `<tr><td class="l">${esc(c)}</td>
-   <td><input class="num" style="width:120px" data-sldant="${esc(c)}" value="${va!=null?String(va.toFixed(2)).replace('.',','):''}" placeholder="—"></td>
-   <td><input class="num" style="width:120px" data-sldatu="${esc(c)}" value="${vb!=null?String(vb.toFixed(2)).replace('.',','):''}" placeholder="—"></td></tr>`;}).join('');
- const mov=movimentoContas(comp);
- const esperado=totAnt+mov.e-mov.s;
- const dif=totAtu-esperado;
- const completo=!faltaAnt&&!faltaAtu&&ccs.length>0;
- const fecha=Math.abs(dif)<0.01;
- let statusS;
- if(!completo)statusS=`<span class="tag warn">⚠ informe os saldos${faltaAnt?' de '+nomeAnt:''}${faltaAnt&&faltaAtu?' e':''}${faltaAtu?' de '+MESES[mes]+'/'+ano:''}</span>`;
- else statusS=fecha?'<span class="tag ok">✓ Conciliação fecha</span>':`<span class="tag warn">⚠ Diferença de ${fmt(dif)} — confira lançamentos faltantes ou saldos digitados</span>`;
- h+=`<div class="card"><h2>🏦 Check de saldo das contas — ${MESES_FULL[mes]}/${ano}</h2>
-  <p class="muted-sm" style="margin-bottom:10px">Informe o saldo de fim de mês de cada conta corrente (cartões ficam fora — a fatura entra como saída via "Pagamento de Fatura"). Validação: saldo de ${nomeAnt} + entradas − saídas do mês = saldo atual.</p>
-  <div class="row" style="align-items:flex-start;gap:24px;flex-wrap:wrap">
-  <table style="max-width:430px"><thead><tr><th class="l">Conta</th><th>Fim ${nomeAnt}</th><th>Fim ${MESES[mes]}/${ano}</th></tr></thead><tbody>
-   ${linhasS}
-   <tr class="total"><td class="l">Total</td><td>${faltaAnt?'<span class="mut">incompleto</span>':fmt(totAnt)}</td><td>${faltaAtu?'<span class="mut">incompleto</span>':fmt(totAtu)}</td></tr>
-  </tbody></table>
-  <div style="min-width:240px">
-   <div class="li-row"><span class="flex1">Saldo anterior (${nomeAnt})</span><b>${fmt(totAnt)}</b></div>
-   <div class="li-row"><span class="flex1">+ Entradas nas contas</span><b class="pos">${fmt(mov.e)}</b></div>
-   <div class="li-row"><span class="flex1">− Saídas das contas</span><b class="neg">${fmt(mov.s)}</b></div>
-   <div class="li-row"><span class="flex1">= Saldo esperado</span><b>${fmt(esperado)}</b></div>
-   <div class="li-row"><span class="flex1">Saldo informado</span><b>${fmt(totAtu)}</b></div>
-   <div style="margin-top:8px">${statusS}</div>
-  </div></div></div>`;
+ // ---- Resumo do check de saldo (detalhe na aba Saldos) ----
+ const RS=resumoSaldos(ano,mes);
+ h+=`<div class="card"><div class="row">
+  <span class="flex1"><b>🏦 Saldo das contas</b> <span class="muted-sm">— conciliação de ${MESES_FULL[mes]}/${ano}</span></span>
+  ${RS.completo?(RS.fecha?'<span class="tag ok">✓ Conciliação fecha</span>':`<span class="tag warn">⚠ ${RS.nDif} conta(s) com diferença · ${fmt(RS.dif)}</span>`):'<span class="tag info">saldos pendentes</span>'}
+  <button class="btn sec" id="pAbrirSaldos">Abrir Saldos →</button>
+ </div></div>`;
  const el=document.getElementById('tab-painel');el.innerHTML=h;
- el.querySelectorAll('input[data-sldant]').forEach(i=>{i.onchange=()=>{const v=parseValorBR(i.value);saldoSet(compAnt,i.dataset.sldant,i.value.trim()===''?null:v);rerender();};});
- el.querySelectorAll('input[data-sldatu]').forEach(i=>{i.onchange=()=>{const v=parseValorBR(i.value);saldoSet(comp,i.dataset.sldatu,i.value.trim()===''?null:v);rerender();};});
+ el.querySelector('#pAbrirSaldos').onclick=()=>irParaAba('saldos');
  el.querySelector('#pMes').onchange=e=>{state.mes=+e.target.value;rerender();};
  el.querySelector('#pAno').onchange=e=>{state.ano=+e.target.value;rerender();};
  const sc=el.querySelector('#pSemCat');if(sc)sc.onclick=()=>irParaAba('importacao');
@@ -492,6 +542,9 @@ function parseOFX(txt){
   if(isNaN(v)||v===0)return;
   regs.push({data,descricao:desc,valor:Math.abs(v),tipo:v<0?'despesa':'receita'});
  });
+ const lb=txt.match(/<LEDGERBAL>[\s\S]*?<BALAMT>([^<\r\n]+)[\s\S]*?<DTASOF>([^<\r\n]+)/i);
+ if(lb){const v=parseFloat(String(lb[1]).trim().replace(',','.'));const d=String(lb[2]).trim();
+  if(!isNaN(v)&&/^\d{8}/.test(d))regs.forEach(r=>r._ledger={valor:v,data:`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`});}
  return regs;}
 function parseCSVlinhas(txt){
  const sep=(txt.split('\n')[0].match(/;/g)||[]).length>=(txt.split('\n')[0].match(/,/g)||[]).length?';':',';
@@ -802,6 +855,16 @@ function modalPreview(regs){
    const freq={};comps.forEach(c=>freq[c]=(freq[c]||0)+1);
    const maisComum=Object.entries(freq).sort((x,y)=>y[1]-x[1])[0][0];
    state.ano=+maisComum.slice(0,4);fRea.mes='todos';fRea.cat='todas';fRea.fonte='todas';fRea.busca='';}
+  const led=regs.find(r=>r._inc&&r._ledger);
+  if(led&&contasCorrentes().includes(fonte)){
+   const lc=led._ledger.data.slice(0,7);
+   if(!state.saldosOFX[lc])state.saldosOFX[lc]={};
+   state.saldosOFX[lc][fonte]=led._ledger;
+   saldoSet(lc,fonte,led._ledger.valor);
+   if(!state.saldosMeta[lc])state.saldosMeta[lc]={};
+   state.saldosMeta[lc][fonte]='ofx';
+   toast('🏦 Saldo de '+fonte+' capturado do extrato ('+led._ledger.data.split('-').reverse().join('/')+'): '+fmt(led._ledger.valor));
+  }
   fecharModal();rerender();toast(n+' lançamento(s) importado(s) — exibindo '+state.ano+'.');};}
 /* ============ IMPORTAÇÃO REALIZADO (multi-conta / multi-mês) ============ */
 const normKey=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
@@ -1105,6 +1168,7 @@ function mesclarEstados(remoto){
   else Object.entries(cats).forEach(([c,v])=>{if(!state.orcamento[ano][c])state.orcamento[ano][c]=v;});});
  if(!state.saldos)state.saldos={};
  Object.entries(remoto.saldos||{}).forEach(([m,cs])=>{if(!state.saldos[m])state.saldos[m]=cs;else Object.entries(cs).forEach(([c,v])=>{if(state.saldos[m][c]===undefined)state.saldos[m][c]=v;});});
+ ['saldosOFX','saldosMeta'].forEach(k=>{if(!state[k])state[k]={};Object.entries(remoto[k]||{}).forEach(([m,cs])=>{if(!state[k][m])state[k][m]=cs;else Object.entries(cs).forEach(([c,v])=>{if(state[k][m][c]===undefined)state[k][m][c]=v;});});});
  if(!state.anotacoes)state.anotacoes=[];
  const aids=new Set(state.anotacoes.map(a=>a.id));
  (remoto.anotacoes||[]).forEach(a=>{if(!aids.has(a.id))state.anotacoes.push(a);});
