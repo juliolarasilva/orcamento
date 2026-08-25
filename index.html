@@ -104,7 +104,7 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
 const MESES=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const MESES_FULL=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const SEED_CATS=(()=>{const d=[
- ['Receitas','receita',['Adiantamento Marcelo','Salário Marcelo','Férias Marcelo','13° Marcelo','Entradas Daiane','Rendimento Aplicações','Cursos Extras','Restituição IR Marcelo','Outras Entradas']],
+ ['Receitas','receita',['Salário 1','Salário 2','Adiantamento Salarial','Férias','13° Salário','Rendimento Aplicações','Renda Extra','Restituição IR','Outras Entradas']],
  ['Dízimo e Oferta','despesa',['Dízimo e Oferta']],
  ['Moradia','despesa',['Financiamento Imobiliário','Condomínio','Manutenção / Reforma','Água','Energia Elétrica','Gás','IPTU','Outros Moradia']],
  ['Comunicações','despesa',['Telefone Fixo','Telefone Celular','Streaming','Internet','Outros Comunicação']],
@@ -112,8 +112,8 @@ const SEED_CATS=(()=>{const d=[
  ['Transporte','despesa',['Combustível','Manutenção Veículo','Lavagem','Estacionamento','Pedágio','Uber','Outros Transportes']],
  ['Saúde','despesa',['Plano de Saúde','Remédios','Aula Bateria','Aula Piano','Academia','Outros Saúde']],
  ['Educação','despesa',['Mensalidades','Alimentação Escolar','Material Escolar','Condução','Inglês','Espanhol','Outras Educação']],
- ['Lazer','despesa',['Viagens','Acampamento','Cinema','Festas/Churrascos','Livros','Alimentação Marcelo','Outros Lazer']],
- ['Pessoais','despesa',['Vestuário','Calçados','Cabelereiro','Presentes','Salão Beleza','Tito','Outras Pessoais']],
+ ['Lazer','despesa',['Viagens','Acampamento','Cinema','Festas/Churrascos','Livros','Outros Lazer']],
+ ['Pessoais','despesa',['Vestuário','Calçados','Cabelereiro','Presentes','Salão Beleza','Pet','Outras Pessoais']],
  ['Compras','despesa',['Decoração','Eletrodomésticos','Móveis','Outras Compras']],
  ['Seguros','despesa',['Seguro do Carro','Seguro da Casa','Seguro Viagem','Seguro de Vida']],
  ['Impostos','despesa',['Impostos']],
@@ -122,11 +122,11 @@ const SEED_CATS=(()=>{const d=[
  ['Transferências','transferencia',['Transferência entre contas','Pagamento de Fatura']]
 ];const out=[];d.forEach(([g,t,items])=>items.forEach(n=>out.push({grupo:g,nome:n,tipo:t})));return out;})();
 const SEED_CONTAS=['Conta Itaú','Conta Caixa','Conta Bradesco','Conta Brasil','Conta Santander','Cartão Caixa Elo','Cartão Brasil','Cartão Bradesco'];
-const SEED_VERSAO=1; // ⬆ incremente ao alterar SEED_CATS/SEED_CONTAS para propagar a todos
+const SEED_VERSAO=2; // ⬆ incremente ao alterar SEED_CATS/SEED_CONTAS para propagar a todos
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Família Guerreiro',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[]};}
+function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[]};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
 function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};migrarSeed();return;}}catch(e){}state=novoEstado();}
