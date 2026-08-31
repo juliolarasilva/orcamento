@@ -557,7 +557,9 @@ async function processarArquivos(files){
    else if(ext==='pdf')regs=await parsePDF(f);
    else{toast('Formato não suportado: '+f.name);continue;}
    regs.forEach(r=>r.arquivo=f.name);
+   const _ctrl=regs._controle,_prev=todas._controle;
    todas=todas.concat(regs);
+   todas._controle=_ctrl?(_prev?null:_ctrl):_prev;
   }catch(err){console.error(err);toast('Erro ao ler '+f.name+': '+err.message);}
  }
  if(todas.length)modalPreview(todas);
@@ -648,69 +650,50 @@ function extrairExtrato(pages){
  const SKIP=/SALDO|TOTAL|EXTRATOINEXISTENTE|COD\.?LANC/;
  const STOP=/INFORMACOESADICIONAIS|INFORMACOESCOMPLEMENTARES|LANCAMENTOSFUTUROS|SALDODACONTACORRENTE/;
  const HDRJUNK=/\bAGENCIA\b|\bCONTA\b|\bHISTORICO\b|BRADESCOCELULAR|EXTRATODE|\bPERIODO\b|\bNOME\b|\bFOLHA\b|\bDOCTO\b|RAZAOSOCIAL|\bCNPJ\b|\bEMITIDO\b|\bCLIENTE\b/;
- let cols={},mode=null,paren=false,have=false;
- const out=[];
+ let cols={},mode=null,paren=false,have=false;const out=[];const saldos=[];
  const right=it=>it.x+(it.w||0);
  pages.forEach(items=>{
   if(!items||!items.length)return;
-  const byY={};
-  items.forEach(it=>{const k=Math.round(it.y/2)*2;(byY[k]=byY[k]||[]).push(it);});
+  const byY={};items.forEach(it=>{const k=Math.round(it.y/2)*2;(byY[k]=byY[k]||[]).push(it);});
   const lines=Object.keys(byY).map(Number).sort((a,b)=>b-a).map(k=>byY[k].slice().sort((a,b)=>a.x-b.x));
-  if(!have){
-   for(const ln of lines){
-    const N=norm(ln.map(i=>i.s).join(''));
-    if(N.includes('CREDITO')&&N.includes('DEBITO')){
-     mode='CD';
-     ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('CREDITO'))cols.C=right(i);if(s.startsWith('DEBITO'))cols.D=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('HISTORICO'))cols.H=i.x;});
-     have=true;break;
-    }
-    if(N.includes('VALOR')&&(N.includes('SALDO')||N.includes('HISTORICO')||N.includes('LANCAMENTOS'))){
-     mode='V';
-     ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('VALOR'))cols.V=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('LANCAMENTOS')||s.startsWith('HISTORICO'))cols.H=i.x;});
-     have=true;break;
-    }
-   }
-  }
+  if(!have){for(const ln of lines){const N=norm(ln.map(i=>i.s).join(''));
+    if(N.includes('CREDITO')&&N.includes('DEBITO')){mode='CD';ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('CREDITO'))cols.C=right(i);if(s.startsWith('DEBITO'))cols.D=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('HISTORICO'))cols.H=i.x;});have=true;break;}
+    if(N.includes('VALOR')&&(N.includes('SALDO')||N.includes('HISTORICO')||N.includes('LANCAMENTOS'))){mode='V';ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('VALOR'))cols.V=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('LANCAMENTOS')||s.startsWith('HISTORICO'))cols.H=i.x;});have=true;break;}}}
   if(!have)return;
   if(items.some(i=>PAREN.test(i.s)))paren=true;
-  const valKeys=['V','C','D'].filter(k=>cols[k]!=null);
-  if(!valKeys.length)return;
-  const valleft=Math.min(...valKeys.map(k=>cols[k]));
-  const hist=cols.H!=null?cols.H:80;
-  const meta=lines.map(ln=>{
-   const txt=ln.map(i=>i.s).join(' ');
-   const dateItem=ln.find(i=>DATE.test(i.s.trim()));
-   const nums=ln.filter(i=>MONEY.test(i.s.trim().replace(/\s*\(\s*[+\-]\s*\)$/,'')));
-   const ht=ln.filter(i=>{const s=i.s.trim();return !DATE.test(s)&&!MONEY.test(s.replace(/\s*\(\s*[+\-]\s*\)$/,''))&&!/^\(\s*[+\-]\s*\)$/.test(s)&&i.x>=hist-4&&i.x<valleft-5;}).map(i=>i.s).join(' ').trim();
-   return {ln,N:norm(txt),date:dateItem?dateItem.s.trim():null,nums,ht};
-  });
+  const valKeys=['V','C','D'].filter(k=>cols[k]!=null);if(!valKeys.length)return;
+  const valleft=Math.min(...valKeys.map(k=>cols[k]));const hist=cols.H!=null?cols.H:80;
+  const meta=lines.map(ln=>{const txt=ln.map(i=>i.s).join(' ');const dateItem=ln.find(i=>DATE.test(i.s.trim()));const nums=ln.filter(i=>MONEY.test(i.s.trim().replace(/\s*\(\s*[+\-]\s*\)$/,'')));const ht=ln.filter(i=>{const s=i.s.trim();return !DATE.test(s)&&!MONEY.test(s.replace(/\s*\(\s*[+\-]\s*\)$/,''))&&!/^\(\s*[+\-]\s*\)$/.test(s)&&i.x>=hist-4&&i.x<valleft-5;}).map(i=>i.s).join(' ').trim();return {ln,N:norm(txt),date:dateItem?dateItem.s.trim():null,nums,ht};});
   let curdate=null,stop=false;
   const usable=j=>j>=0&&j<meta.length&&!meta[j].nums.length&&!meta[j].date&&!HDRJUNK.test(meta[j].N)&&!SKIP.test(meta[j].N);
   meta.forEach((m,i)=>{
    if(STOP.test(m.N))stop=true;
    if(stop)return;
    if(m.date)curdate=m.date;
+   if(m.nums.length&&curdate){
+    const setBal=it=>{let bv=pvBR(it.s);if(bv!=null){const lt=m.ln.map(x=>x.s).join(' ');if(/\(\s*-\s*\)/.test(lt))bv=-Math.abs(bv);else if(/\(\s*\+\s*\)/.test(lt))bv=Math.abs(bv);saldos.push({data:curdate,valor:bv,label:m.N});}};
+    if(cols.S!=null){m.nums.forEach(it=>{const xc=right(it),dS=Math.abs(xc-cols.S),others=['V','C','D'].filter(k=>cols[k]!=null).map(k=>Math.abs(xc-cols[k]));if(others.length&&others.every(d=>dS<d))setBal(it);});}
+    else if(/SALDO/.test(m.N)){setBal(m.nums.reduce((a,b)=>right(b)>right(a)?b:a,m.nums[0]));}
+   }
    if(!m.nums.length||!curdate||SKIP.test(m.N))return;
    let val=null,tipo=null;
-   if(mode==='CD'){
-    for(const it of m.nums){const xc=right(it),dC=Math.abs(xc-cols.C),dD=Math.abs(xc-cols.D),dS=cols.S!=null?Math.abs(xc-cols.S):1e9;
-     if(dC<dD&&dC<dS){val=pvBR(it.s);tipo='receita';break;}
-     if(dD<dS){val=pvBR(it.s);tipo='despesa';break;}}
-   }else{
-    const cand=m.nums.filter(it=>cols.S==null||Math.abs(right(it)-cols.V)<=Math.abs(right(it)-cols.S));
-    if(cand.length){const it=cand[0];val=pvBR(it.s);
-     if(paren){const sg=m.ln.map(x=>x.s).join(' ').match(PAREN);tipo=sg?(sg[1]==='+'?'receita':'despesa'):(val<0?'despesa':'receita');}
-     else tipo=val<0?'despesa':'receita';}
-   }
+   if(mode==='CD'){for(const it of m.nums){const xc=right(it),dC=Math.abs(xc-cols.C),dD=Math.abs(xc-cols.D),dS=cols.S!=null?Math.abs(xc-cols.S):1e9;if(dC<dD&&dC<dS){val=pvBR(it.s);tipo='receita';break;}if(dD<dS){val=pvBR(it.s);tipo='despesa';break;}}}
+   else{const cand=m.nums.filter(it=>cols.S==null||Math.abs(right(it)-cols.V)<=Math.abs(right(it)-cols.S));if(cand.length){const it=cand[0];val=pvBR(it.s);if(paren){const sg=m.ln.map(x=>x.s).join(' ').match(PAREN);tipo=sg?(sg[1]==='+'?'receita':'despesa'):(val<0?'despesa':'receita');}else tipo=val<0?'despesa':'receita';}}
    if(val==null||val===0)return;
-   const above=usable(i-1)?meta[i-1].ht:'';
-   const own=!HDRJUNK.test(m.N)?m.ht:'';
-   const parts=own?[above,own]:[above,(usable(i+1)?meta[i+1].ht:'')];
-   const desc=(parts.filter(Boolean).join(' ').replace(/\s+/g,' ').replace(/^\d{4,}\s+/,'').replace(/\b\d{2}:\d{2}\b/g,'').replace(/\s+/g,' ').trim().slice(0,70))||'(sem descrição)';
+   const above=usable(i-1)?meta[i-1].ht:'';const own=!HDRJUNK.test(m.N)?m.ht:'';const parts=own?[above,own]:[above,(usable(i+1)?meta[i+1].ht:'')];
+   const desc=(parts.filter(Boolean).join(' ').replace(/\s+/g,' ').replace(/^\d{4,}\s+/,'').replace(/\b\d{2}:\d{2}\b/g,'').replace(/\s+/g,' ').trim().slice(0,70))||'(sem descricao)';
    const data=`${curdate.slice(6,10)}-${curdate.slice(3,5)}-${curdate.slice(0,2)}`;
    out.push({data,descricao:desc,valor:Math.abs(val),tipo});
   });
  });
+ if(saldos.length){
+  const iso=d=>d?`${d.slice(6,10)}-${d.slice(3,5)}-${d.slice(0,2)}`:null;
+  const S=saldos.map(s=>({data:iso(s.data),valor:s.valor,label:s.label})).filter(s=>s.data);
+  const asc=[...S].sort((a,b)=>a.data.localeCompare(b.data));
+  const ab=S.find(s=>/ANTERIOR/.test(s.label))||asc[0]||null;
+  const fe=S.find(s=>/EMCONTACORRENTE/.test(s.label))||(asc.length?asc[asc.length-1]:null);
+  out._controle={tipo:'extrato',abertura:ab,fechamento:fe,saldos:S};
+ }
  return out;
 }
 /* Parser posicional de FATURA de cartao (itens {x,y,w,s} do pdf.js).
@@ -718,69 +701,31 @@ function extrairExtrato(pages){
    Caixa: coluna unica, sufixo D/C no valor, parcelas atuais incluidas.
    Saida: tipo 'despesa' com credito/estorno negativo (reduz a categoria). */
 function extrairFatura(pages){
- const DATEMM=/^\d{2}\/\d{2}$/;
- const MONEY=/^-?\d{1,3}(\.\d{3})*,\d{2}$/;
- const MONEYDC=/^-?\d{1,3}(\.\d{3})*,\d{2}[DC]$/;
- const DATEFULL=/(\d{2})\/(\d{2})\/(\d{4})/;
+ const DATEMM=/^\d{2}\/\d{2}$/;const MONEY=/^-?\d{1,3}(\.\d{3})*,\d{2}$/;const MONEYDC=/^-?\d{1,3}(\.\d{3})*,\d{2}[DC]$/;const DATEFULL=/(\d{2})\/(\d{2})\/(\d{4})/;
  const norm=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'');
  const isMoney=s=>MONEY.test(s)||MONEYDC.test(s);
  const pv=s=>{let dc='';s=String(s).trim();if(/[DC]$/.test(s)){dc=s.slice(-1);s=s.slice(0,-1);}const neg=/^-/.test(s);const x=parseFloat(s.replace(/[^\d,]/g,'').replace(/\./g,'').replace(',','.'));if(isNaN(x))return null;if(dc==='C')return -Math.abs(x);if(dc==='D')return Math.abs(x);return neg?-x:x;};
- const mergeLinha=ws=>{const r=[];for(let i=0;i<ws.length;i++){let it={...ws[i]};
-   if(it.s==='-'&&ws[i+1]&&MONEY.test(ws[i+1].s)&&(ws[i+1].x-(it.x+(it.w||0)))<12){it={...ws[i+1],s:'-'+ws[i+1].s,x:it.x};i++;}
-   else if(MONEY.test(it.s)&&ws[i+1]&&/^[DC]$/.test(ws[i+1].s)&&(ws[i+1].x-(it.x+(it.w||0)))<12){it={...it,s:it.s+ws[i+1].s};i++;}
-   r.push(it);}return r;};
+ const mergeLinha=ws=>{const r=[];for(let i=0;i<ws.length;i++){let it={...ws[i]};if(it.s==='-'&&ws[i+1]&&MONEY.test(ws[i+1].s)&&(ws[i+1].x-(it.x+(it.w||0)))<12){it={...ws[i+1],s:'-'+ws[i+1].s,x:it.x};i++;}else if(MONEY.test(it.s)&&ws[i+1]&&/^[DC]$/.test(ws[i+1].s)&&(ws[i+1].x-(it.x+(it.w||0)))<12){it={...it,s:it.s+ws[i+1].s};i++;}r.push(it);}return r;};
  const linhasDe=items=>{const byY={};items.forEach(it=>{const k=Math.round(it.y/2)*2;(byY[k]=byY[k]||[]).push(it);});return Object.keys(byY).map(Number).sort((a,b)=>b-a).map(k=>mergeLinha(byY[k].slice().sort((a,b)=>a.x-b.x)));};
- // vencimento (para inferir o ano): primeiro dd/mm/aaaa apos a palavra "Vencimento", senao o 1o dd/mm/aaaa
  let venc=null;
  for(const p of pages){for(let i=0;i<p.length;i++){if(/VENCIMENTO/.test(norm(p[i].s))){for(let j=i;j<Math.min(i+6,p.length);j++){const m=String(p[j].s).match(DATEFULL);if(m){venc={m:+m[2],y:+m[3]};break;}}}if(venc)break;}if(venc)break;}
  if(!venc){for(const p of pages){for(const it of p){const m=String(it.s).match(DATEFULL);if(m){venc={m:+m[2],y:+m[3]};break;}}if(venc)break;}}
  const ref=venc||{m:new Date().getMonth()+1,y:new Date().getFullYear()};
- // modo Caixa = ha valor com sufixo D/C (apos juntar tokens separados)
- let modoCaixa=false;
- pages.forEach(items=>{linhasDe(items).forEach(ws=>{if(ws.some(w=>MONEYDC.test(w.s)))modoCaixa=true;});});
+ // total declarado da fatura
+ const LAB=/TOTALDESTAFATURA|VALORTOTALDESTAFATURA|TOTALDOSLANCAMENTOSATUAIS/;let declarado=null;
+ pages.forEach(items=>{linhasDe(items).forEach(ws=>{const N=norm(ws.map(i=>i.s).join(''));if(LAB.test(N)){const vals=ws.filter(w=>isMoney(w.s)).map(w=>Math.abs(pv(w.s))).filter(v=>v!=null&&!isNaN(v));if(vals.length){const mx=Math.max(...vals);if(declarado==null||mx>declarado)declarado=mx;}}});});
+ let modoCaixa=false;pages.forEach(items=>{linhasDe(items).forEach(ws=>{if(ws.some(w=>MONEYDC.test(w.s)))modoCaixa=true;});});
  const out=[];
  if(modoCaixa){
-  const SKIP=/TOTALDAFATURA|OBRIGADOPELO|^TOTAL|SALDOANTERIOR|VALORTOTALDESTA|PAGAMENTOEFETUADO|^CREDITO\/DEBITO|FATORCONVERSAO|^PONTOS|BONIFICA/;
-  let curdate=null;
-  pages.forEach(items=>{linhasDe(items).forEach(ws=>{
-   if(!ws.length)return;
-   ws.forEach(w=>{
-    if(!isMoney(w.s))return;const v=pv(w.s);if(v==null||v===0)return;
-    let dtok=null;ws.forEach(x=>{if(x.x<w.x&&DATEMM.test(x.s))dtok=x;});
-    if(dtok)curdate=dtok.s;
-    if(!curdate)return;
-    const dx=dtok?dtok.x:-1e9;
-    const estab=ws.filter(x=>x.x>dx&&x.x<w.x&&!DATEMM.test(x.s)&&!isMoney(x.s)).map(x=>x.s).join(' ').replace(/\s+/g,' ').trim();
-    if(SKIP.test(norm(estab)))return;
-    out.push({data:curdate,descricao:estab.slice(0,55)||'(sem descricao)',valor:v});
-   });
-  });});
+  const SKIP=/TOTALDAFATURA|OBRIGADOPELO|^TOTAL|SALDOANTERIOR|VALORTOTALDESTA|PAGAMENTOEFETUADO|^CREDITO\/DEBITO|FATORCONVERSAO|^PONTOS|BONIFICA/;let curdate=null;
+  pages.forEach(items=>{linhasDe(items).forEach(ws=>{if(!ws.length)return;ws.forEach(w=>{if(!isMoney(w.s))return;const v=pv(w.s);if(v==null||v===0)return;let dtok=null;ws.forEach(x=>{if(x.x<w.x&&DATEMM.test(x.s))dtok=x;});if(dtok)curdate=dtok.s;if(!curdate)return;const dx=dtok?dtok.x:-1e9;const estab=ws.filter(x=>x.x>dx&&x.x<w.x&&!DATEMM.test(x.s)&&!isMoney(x.s)).map(x=>x.s).join(' ').replace(/\s+/g,' ').trim();if(SKIP.test(norm(estab)))return;out.push({data:curdate,descricao:estab.slice(0,55)||'(sem descricao)',valor:v});});});});
  }else{
-  const STOPFUT=/COMPRASPARCELADAS|PROXIMASFATURAS|SIMULACAO|LIMITES|SEGURO|DEMONSTRATIVO/;
-  const SKIPDESC=/LANCAMENTOSNOCARTAO|VALOREMR\$|^DATA|\(FINAL|PRODUTOS\/SERVICOS|^TOTAL/;
-  let skipfut=false;
-  pages.forEach(items=>{const linhas=linhasDe(items);
-   [[120,360],[360,9999]].forEach(([lo,hi])=>{let prev=null;
-    linhas.forEach(allw=>{
-     const ws=allw.filter(w=>w.x>=lo&&w.x<hi);if(!ws.length)return;
-     const N=norm(ws.map(i=>i.s).join(''));
-     if(STOPFUT.test(N)){skipfut=true;prev=null;return;}
-     if(skipfut)return;
-     const date=ws.find(w=>DATEMM.test(w.s));
-     if(date){const vt=ws.find(w=>isMoney(w.s)&&w.x>date.x);
-      if(vt){const v=pv(vt.s);
-       const estab=ws.filter(w=>!DATEMM.test(w.s)&&!isMoney(w.s)&&w.x>date.x&&w.x<vt.x).map(w=>w.s).join(' ').replace(/\s+/g,' ').trim().slice(0,55);
-       const o={data:date.s,descricao:estab||'(sem descricao)',valor:v};out.push(o);prev=o;return;}}
-     if(prev&&!ws.some(w=>isMoney(w.s))&&!SKIPDESC.test(N)){prev.descricao=(prev.descricao+' '+ws.map(w=>w.s).join(' ')).replace(/\s+/g,' ').trim().slice(0,55);}
-    });
-   });
-  });
+  const STOPFUT=/COMPRASPARCELADAS|PROXIMASFATURAS|SIMULACAO|LIMITES|SEGURO|DEMONSTRATIVO/;const SKIPDESC=/LANCAMENTOSNOCARTAO|VALOREMR\$|^DATA|\(FINAL|PRODUTOS\/SERVICOS|^TOTAL/;let skipfut=false;
+  pages.forEach(items=>{const linhas=linhasDe(items);[[120,360],[360,9999]].forEach(([lo,hi])=>{let prev=null;linhas.forEach(allw=>{const ws=allw.filter(w=>w.x>=lo&&w.x<hi);if(!ws.length)return;const N=norm(ws.map(i=>i.s).join(''));if(STOPFUT.test(N)){skipfut=true;prev=null;return;}if(skipfut)return;const date=ws.find(w=>DATEMM.test(w.s));if(date){const vt=ws.find(w=>isMoney(w.s)&&w.x>date.x);if(vt){const v=pv(vt.s);const estab=ws.filter(w=>!DATEMM.test(w.s)&&!isMoney(w.s)&&w.x>date.x&&w.x<vt.x).map(w=>w.s).join(' ').replace(/\s+/g,' ').trim().slice(0,55);const o={data:date.s,descricao:estab||'(sem descricao)',valor:v};out.push(o);prev=o;return;}}if(prev&&!ws.some(w=>isMoney(w.s))&&!SKIPDESC.test(N)){prev.descricao=(prev.descricao+' '+ws.map(w=>w.s).join(' ')).replace(/\s+/g,' ').trim().slice(0,55);}});});});
  }
- // aplica ano (dd/mm -> aaaa-mm-dd) e converte para a saida do app
- return out.map(o=>{let data=o.data;
-  if(/^\d{2}\/\d{2}$/.test(data)){const mm=+data.slice(3,5);const y=mm<=ref.m?ref.y:ref.y-1;data=y+'-'+data.slice(3,5)+'-'+data.slice(0,2);}
-  return {data,descricao:o.descricao,valor:o.valor,tipo:'despesa'};
- });
+ const res=out.map(o=>{let data=o.data;if(/^\d{2}\/\d{2}$/.test(data)){const mm=+data.slice(3,5);const y=mm<=ref.m?ref.y:ref.y-1;data=y+'-'+data.slice(3,5)+'-'+data.slice(0,2);}return {data,descricao:o.descricao,valor:o.valor,tipo:'despesa'};});
+ res._controle={tipo:'fatura',declarado};
+ return res;
 }
 async function parsePDF(f){
  if(typeof pdfjsLib==='undefined')throw new Error('Leitor de PDF indisponível (precisa de internet na 1ª vez).');
@@ -848,6 +793,32 @@ function parseLinhasFatura(linhas){
 }
 /* ================= IMPORTAÇÃO: PRÉVIA ================= */
 function chaveDup(t){return `${t.data}|${t.valor.toFixed(2)}|${normDesc(t.descricao)}`;}
+function conferenciaHTML(regs){
+ const c=regs&&regs._controle;if(!c)return '';
+ const dBR=d=>d?d.split('-').reverse().join('/'):'';
+ const box=(cls,html)=>`<div class="tag ${cls}" style="display:block;padding:9px;margin-bottom:10px;line-height:1.5">${html}</div>`;
+ if(c.tipo==='fatura'){
+  if(c.declarado==null)return box('info','🧾 Conferência: não localizei o total da fatura no PDF — confira manualmente.');
+  const soma=regs.reduce((s,r)=>s+r.valor,0),diff=soma-c.declarado,ad=Math.abs(diff);
+  const info=`soma dos lançamentos <b>${fmt(soma)}</b> · total da fatura <b>${fmt(c.declarado)}</b>`;
+  if(ad<0.005)return box('ok','✅ <b>Confere com a fatura</b> — '+info);
+  if(ad<=0.10)return box('ok','✅ Confere (diferença de '+fmt(diff)+', arredondamento) — '+info);
+  return box('warn','⚠ <b>Diferença de '+fmt(diff)+'</b> — provavelmente há lançamento(s) não lido(s) ou a mais. '+info);
+ }
+ if(c.tipo==='extrato'){
+  if(!c.abertura||!c.fechamento)return box('info','🏦 Conferência: não localizei os saldos no extrato — confira manualmente.');
+  const net=regs.reduce((s,r)=>s+(r.tipo==='receita'?r.valor:-r.valor),0);
+  const esperado=c.fechamento.valor-c.abertura.valor,diff=net-esperado,ad=Math.abs(diff);
+  const info=`saldo ${dBR(c.abertura.data)} <b>${fmt(c.abertura.valor)}</b> + movimentos <b>${fmt(net)}</b> = <b>${fmt(c.abertura.valor+net)}</b> · saldo final ${dBR(c.fechamento.data)} <b>${fmt(c.fechamento.valor)}</b>`;
+  if(ad<0.005)return box('ok','✅ <b>Confere com o extrato</b> — '+info);
+  if(ad<=0.10)return box('ok','✅ Confere (diferença de '+fmt(diff)+', arredondamento/juros do banco) — '+info);
+  let loc='';
+  const perDate={};c.saldos.forEach(s=>perDate[s.data]=(perDate[s.data]||0)+1);const umPorDia=Object.values(perDate).every(n=>n===1);
+  if(umPorDia){const balByDate={};c.saldos.forEach(s=>balByDate[s.data]=s.valor);const datas=Object.keys(balByDate).sort();const movByDate={};regs.forEach(r=>{movByDate[r.data]=(movByDate[r.data]||0)+(r.tipo==='receita'?r.valor:-r.valor);});let prev=null,gaps=[];datas.forEach(d=>{if(prev!=null){let mv=0;Object.keys(movByDate).forEach(md=>{if(md>prev&&md<=d)mv+=movByDate[md];});const delta=balByDate[d]-balByDate[prev];if(Math.abs(delta-mv)>0.10)gaps.push({de:prev,ate:d,falta:delta-mv});}prev=d;});if(gaps.length)loc='<br><span style="font-weight:400">Provável ponto: '+gaps.slice(0,3).map(g=>`entre <b>${dBR(g.de)}</b> e <b>${dBR(g.ate)}</b> (faltam ${fmt(Math.abs(g.falta))})`).join('; ')+'</span>';}
+  return box('warn','⚠ <b>Diferença de '+fmt(diff)+'</b> — provavelmente há lançamento(s) não lido(s). '+info+loc);
+ }
+ return '';
+}
 function modalPreview(regs){
  const existentes=new Set(state.transacoes.map(chaveDup));
  regs.forEach(r=>{r._id=uid();r._dup=existentes.has(chaveDup(r));r._inc=!r._dup;aplicarRegras(r);
@@ -868,6 +839,7 @@ function modalPreview(regs){
    ${venc?`<span class="tag info">💳 Fatura com vencimento em ${venc.slice(5,7)}/${venc.slice(0,4)} — competência pré-selecionada para o mês de pagamento</span>`:''}
    <span class="tag warn hide" id="pvAviso">⚠ Cartão de crédito: prefira como competência o mês de pagamento da fatura</span>
   </div>
+  ${conferenciaHTML(regs)}
   <div class="tblwrap" style="max-height:46vh"><table><thead><tr><th><input type="checkbox" id="pvAll" checked></th><th class="l">Data</th><th class="l">Descrição</th><th>Valor</th><th class="l">Tipo</th><th class="l" style="min-width:190px">Categoria</th><th class="l">Status</th></tr></thead><tbody>
   ${regs.map(r=>`<tr><td><input type="checkbox" data-inc="${r._id}" ${r._inc?'checked':''}></td>
    <td class="l">${r.data.split('-').reverse().join('/')}</td><td class="l" title="${esc(r.descricao)}">${esc(r.descricao.slice(0,45))}</td>
