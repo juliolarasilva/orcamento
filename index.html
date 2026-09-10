@@ -152,10 +152,10 @@ const SEED_VERSAO=2; // ⬆ incremente ao alterar SEED_CATS/SEED_CONTAS para pro
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[],contaSub:'',contaEmail:'',familiaDefinida:false};}
+function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[],contaSub:'',contaEmail:'',familiaDefinida:false,categoriasTS:0};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};if(state.contaSub===undefined)state.contaSub='';if(state.contaEmail===undefined)state.contaEmail='';if(state.familiaDefinida===undefined)state.familiaDefinida=!!((state.familia&&state.familia!=='Minha Família')||estadoTemDados(state));migrarSeed();return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};if(state.contaSub===undefined)state.contaSub='';if(state.contaEmail===undefined)state.contaEmail='';if(state.categoriasTS===undefined)state.categoriasTS=0;if(state.familiaDefinida===undefined)state.familiaDefinida=!!((state.familia&&state.familia!=='Minha Família')||estadoTemDados(state));migrarSeed();return;}}catch(e){}state=novoEstado();}
 function migrarSeed(){
  if(!state.seedRemovidos)state.seedRemovidos=[];
  if((state.seedVersao||0)>=SEED_VERSAO)return;
@@ -178,6 +178,22 @@ function parseDataBR(s){s=String(s||'').trim();let m=s.match(/^(\d{4})-(\d{2})-(
 const compDe=d=>d?d.slice(0,7):null;
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3200);}
 function catPorNome(n){return state.categorias.find(c=>c.nome===n);}
+function marcarCategorias(){state.categoriasTS=Date.now();}
+function ordenarComoRemoto(remotoCats){
+ const gRem=[];remotoCats.forEach(c=>{if(!gRem.includes(c.grupo))gRem.push(c.grupo);});
+ const gLoc=[];state.categorias.forEach(c=>{if(!gLoc.includes(c.grupo))gLoc.push(c.grupo);});
+ const ordemG=gRem.concat(gLoc.filter(g=>!gRem.includes(g)));
+ const porGrupo={};state.categorias.forEach(c=>{(porGrupo[c.grupo]=porGrupo[c.grupo]||[]).push(c);});
+ const out=[];
+ ordemG.forEach(g=>{
+  const locais=porGrupo[g]||[];
+  const nomesRem=remotoCats.filter(c=>c.grupo===g).map(c=>c.nome);
+  nomesRem.forEach(n=>{const c=locais.find(x=>x.nome===n);if(c&&out.indexOf(c)<0)out.push(c);});
+  locais.forEach(c=>{if(out.indexOf(c)<0)out.push(c);});
+ });
+ state.categorias.forEach(c=>{if(out.indexOf(c)<0)out.push(c);});
+ state.categorias=out;
+}
 function normalizarCategorias(){
  const ordem=[],map={};
  state.categorias.forEach(c=>{if(!map[c.grupo]){map[c.grupo]=[];ordem.push(c.grupo);}map[c.grupo].push(c);});
@@ -191,7 +207,7 @@ function moverCategoria(nome,dir){
  const de=itens.findIndex(x=>x.nome===nome),para=de+dir;
  if(de<0||para<0||para>=itens.length)return false;
  itens.splice(para,0,itens.splice(de,1)[0]);
- aplicarOrdemGrupo(c.grupo,itens);return true;
+ aplicarOrdemGrupo(c.grupo,itens);marcarCategorias();return true;
 }
 function moverCategoriaPara(nome,alvo){
  const c=catPorNome(nome),a=catPorNome(alvo);
@@ -200,7 +216,7 @@ function moverCategoriaPara(nome,alvo){
  const de=itens.findIndex(x=>x.nome===nome),para=itens.findIndex(x=>x.nome===alvo);
  if(de<0||para<0||de===para)return false;
  itens.splice(para,0,itens.splice(de,1)[0]);
- aplicarOrdemGrupo(c.grupo,itens);return true;
+ aplicarOrdemGrupo(c.grupo,itens);marcarCategorias();return true;
 }
 function moverGrupo(nome,dir){
  const gs=grupos().map(g=>g.nome);
@@ -208,7 +224,7 @@ function moverGrupo(nome,dir){
  if(i<0||j<0||j>=gs.length)return false;
  gs.splice(j,0,gs.splice(i,1)[0]);
  const map={};state.categorias.forEach(c=>{(map[c.grupo]=map[c.grupo]||[]).push(c);});
- state.categorias=gs.reduce((a,g)=>a.concat(map[g]||[]),[]);
+ state.categorias=gs.reduce((a,g)=>a.concat(map[g]||[]),[]);marcarCategorias();
  return true;
 }
 function grupos(){const ordem=[];const map={};state.categorias.forEach(c=>{if(!map[c.grupo]){map[c.grupo]={nome:c.grupo,tipo:c.tipo,itens:[]};ordem.push(map[c.grupo]);}map[c.grupo].itens.push(c);});return ordem;}
@@ -1279,6 +1295,8 @@ function mesclarEstados(remoto){
  const aids=new Set(state.anotacoes.map(a=>a.id));
  (remoto.anotacoes||[]).forEach(a=>{if(!aids.has(a.id))state.anotacoes.push(a);});
  (remoto.categorias||[]).forEach(c=>{if(!catPorNome(c.nome))state.categorias.push(c);});
+ const rTS=+(remoto.categoriasTS||0),lTS=+(state.categoriasTS||0);
+ if(rTS>lTS&&(remoto.categorias||[]).length){ordenarComoRemoto(remoto.categorias);state.categoriasTS=rTS;}
  (remoto.contas||[]).forEach(c=>{if(!state.contas.includes(c))state.contas.push(c);});
  if(!state.seedRemovidos)state.seedRemovidos=[];
  (remoto.seedRemovidos||[]).forEach(r=>{if(!state.seedRemovidos.includes(r))state.seedRemovidos.push(r);});
@@ -1413,9 +1431,9 @@ function renderConfig(){
   r.addEventListener('dragend',()=>{arrastando=null;el.querySelectorAll('.arrastando,.drop-alvo').forEach(x=>x.classList.remove('arrastando','drop-alvo'));});
  });
  el.querySelectorAll('button[data-delregra]').forEach(b=>{b.onclick=()=>{delete state.regras[b.dataset.delregra];rerender();};});
- el.querySelectorAll('button[data-delcat]').forEach(b=>{b.onclick=()=>{const n=b.dataset.delcat;const usos=state.transacoes.filter(t=>t.categoria===n).length;if(!confirm(`Excluir a linha "${n}"?`+(usos?` ${usos} lançamento(s) ficarão sem categoria.`:'')))return;if(SEED_CATS.some(s=>s.nome===n)&&!state.seedRemovidos.includes('cat:'+n))state.seedRemovidos.push('cat:'+n);state.categorias=state.categorias.filter(c=>c.nome!==n);state.transacoes.forEach(t=>{if(t.categoria===n)t.categoria=null;});rerender();};});
- el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});normalizarCategorias();rerender();toast('Linha criada. Use ▲ ou arraste para posicionar.');};});
- el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});normalizarCategorias();rerender();toast('Grupo criado. Use ▲ para subir na ordem.');};
+ el.querySelectorAll('button[data-delcat]').forEach(b=>{b.onclick=()=>{const n=b.dataset.delcat;const usos=state.transacoes.filter(t=>t.categoria===n).length;if(!confirm(`Excluir a linha "${n}"?`+(usos?` ${usos} lançamento(s) ficarão sem categoria.`:'')))return;if(SEED_CATS.some(s=>s.nome===n)&&!state.seedRemovidos.includes('cat:'+n))state.seedRemovidos.push('cat:'+n);state.categorias=state.categorias.filter(c=>c.nome!==n);state.transacoes.forEach(t=>{if(t.categoria===n)t.categoria=null;});marcarCategorias();rerender();};});
+ el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});normalizarCategorias();marcarCategorias();rerender();toast('Linha criada. Use ▲ ou arraste para posicionar.');};});
+ el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});normalizarCategorias();marcarCategorias();rerender();toast('Grupo criado. Use ▲ para subir na ordem.');};
  el.querySelector('#cfgLimparTrans').onclick=()=>{if(confirm('Apagar TODOS os lançamentos? O orçamento será mantido.')){state.transacoes=[];rerender();}};
  el.querySelector('#cfgReset').onclick=()=>{if(confirm('Apagar TUDO e voltar ao estado inicial?')&&confirm('Tem certeza? Exporte um backup antes!')){state=novoEstado();rerender();}};
 }
