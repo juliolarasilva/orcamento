@@ -67,6 +67,11 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
 .fonte-pill{font-size:11px;color:var(--mut)}
 .cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px}
 .li-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.cat-row{cursor:grab}
+.cat-row.arrastando{opacity:.35}
+.cat-row.drop-alvo{border-top:2px solid var(--acc2);background:var(--soft)}
+.puxador{color:var(--mut);opacity:.55;cursor:grab;user-select:none;font-size:13px;letter-spacing:-3px;padding-right:2px}
+.grupo-cab{display:flex;align-items:center;gap:6px;padding-bottom:3px}
 .muted-sm{font-size:12px;color:var(--mut)}
 @media(max-width:760px){
  main{padding:8px}
@@ -173,6 +178,39 @@ function parseDataBR(s){s=String(s||'').trim();let m=s.match(/^(\d{4})-(\d{2})-(
 const compDe=d=>d?d.slice(0,7):null;
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3200);}
 function catPorNome(n){return state.categorias.find(c=>c.nome===n);}
+function normalizarCategorias(){
+ const ordem=[],map={};
+ state.categorias.forEach(c=>{if(!map[c.grupo]){map[c.grupo]=[];ordem.push(c.grupo);}map[c.grupo].push(c);});
+ state.categorias=ordem.reduce((a,g)=>a.concat(map[g]),[]);
+}
+function indicesDoGrupo(grupo){const idx=[];state.categorias.forEach((c,i)=>{if(c.grupo===grupo)idx.push(i);});return idx;}
+function aplicarOrdemGrupo(grupo,itens){const idx=indicesDoGrupo(grupo);idx.forEach((p,k)=>{state.categorias[p]=itens[k];});}
+function moverCategoria(nome,dir){
+ const c=catPorNome(nome);if(!c)return false;
+ const itens=indicesDoGrupo(c.grupo).map(i=>state.categorias[i]);
+ const de=itens.findIndex(x=>x.nome===nome),para=de+dir;
+ if(de<0||para<0||para>=itens.length)return false;
+ itens.splice(para,0,itens.splice(de,1)[0]);
+ aplicarOrdemGrupo(c.grupo,itens);return true;
+}
+function moverCategoriaPara(nome,alvo){
+ const c=catPorNome(nome),a=catPorNome(alvo);
+ if(!c||!a||c.grupo!==a.grupo||nome===alvo)return false;
+ const itens=indicesDoGrupo(c.grupo).map(i=>state.categorias[i]);
+ const de=itens.findIndex(x=>x.nome===nome),para=itens.findIndex(x=>x.nome===alvo);
+ if(de<0||para<0||de===para)return false;
+ itens.splice(para,0,itens.splice(de,1)[0]);
+ aplicarOrdemGrupo(c.grupo,itens);return true;
+}
+function moverGrupo(nome,dir){
+ const gs=grupos().map(g=>g.nome);
+ const i=gs.indexOf(nome),j=i+dir;
+ if(i<0||j<0||j>=gs.length)return false;
+ gs.splice(j,0,gs.splice(i,1)[0]);
+ const map={};state.categorias.forEach(c=>{(map[c.grupo]=map[c.grupo]||[]).push(c);});
+ state.categorias=gs.reduce((a,g)=>a.concat(map[g]||[]),[]);
+ return true;
+}
 function grupos(){const ordem=[];const map={};state.categorias.forEach(c=>{if(!map[c.grupo]){map[c.grupo]={nome:c.grupo,tipo:c.tipo,itens:[]};ordem.push(map[c.grupo]);}map[c.grupo].itens.push(c);});return ordem;}
 function orcGet(ano,cat){const a=state.orcamento[ano];if(!a||!a[cat])return Array(12).fill(0);return a[cat];}
 function orcSet(ano,cat,mes,val){if(!state.orcamento[ano])state.orcamento[ano]={};if(!state.orcamento[ano][cat])state.orcamento[ano][cat]=Array(12).fill(0);state.orcamento[ano][cat][mes]=val;}
@@ -1335,9 +1373,9 @@ function renderConfig(){
   <div style="max-height:240px;overflow:auto">${Object.entries(state.regras).sort().map(([k,v])=>`<div class="li-row"><span class="flex1" style="font-size:12px">${esc(k.slice(0,38))}</span><span class="tag ok">${esc(v)}</span><button class="mini" data-delregra="${esc(k)}">🗑</button></div>`).join('')||'<span class="muted-sm">Nenhuma regra ainda.</span>'}</div></div>
  </div>
  <div class="card"><h2>Categorias do orçamento</h2>
-  <p class="muted-sm" style="margin-bottom:10px">Estrutura importada do seu modelo Excel. Grupos organizam o painel; as linhas recebem orçamento e lançamentos.</p>
-  <div class="cfg-grid">${grupos().map(g=>`<div><b>${esc(g.nome)}</b> <span class="tag ${g.tipo==='receita'?'ok':g.tipo==='transferencia'?'info':'warn'}">${g.tipo}</span>
-   ${g.itens.map(c=>`<div class="li-row"><span class="flex1">${esc(c.nome)}</span><button class="mini" data-delcat="${esc(c.nome)}">🗑</button></div>`).join('')}
+  <p class="muted-sm" style="margin-bottom:10px">Grupos organizam o painel; as linhas recebem orçamento e lançamentos. Arraste uma linha pelo ⠿ (ou use ▲ ▼) para mudar a ordem — ela vale no Painel, no Orçamento e no Real Anual.</p>
+  <div class="cfg-grid">${grupos().map((g,gi,ga)=>`<div><div class="grupo-cab"><b class="flex1">${esc(g.nome)}</b> <span class="tag ${g.tipo==='receita'?'ok':g.tipo==='transferencia'?'info':'warn'}">${g.tipo}</span><button class="mini" data-gmove="${esc(g.nome)}" data-dir="-1" title="Subir grupo" ${gi===0?'disabled':''}>▲</button><button class="mini" data-gmove="${esc(g.nome)}" data-dir="1" title="Descer grupo" ${gi===ga.length-1?'disabled':''}>▼</button></div>
+   ${g.itens.map((c,i)=>`<div class="li-row cat-row" draggable="true" data-cat="${esc(c.nome)}"><span class="puxador" title="Arraste para reordenar">⠿</span><span class="flex1">${esc(c.nome)}</span><button class="mini" data-cmove="${esc(c.nome)}" data-dir="-1" title="Subir" ${i===0?'disabled':''}>▲</button><button class="mini" data-cmove="${esc(c.nome)}" data-dir="1" title="Descer" ${i===g.itens.length-1?'disabled':''}>▼</button><button class="mini" data-delcat="${esc(c.nome)}">🗑</button></div>`).join('')}
    <div class="row" style="margin-top:6px"><input data-novacat="${esc(g.nome)}" placeholder="Nova linha" class="flex1" style="font-size:12px"><button class="mini" data-addcat="${esc(g.nome)}">＋</button></div></div>`).join('')}</div>
   <div class="row" style="margin-top:14px"><input id="cfgNovoGrupo" placeholder="Novo grupo"><select id="cfgNovoGrupoTipo"><option value="despesa">despesa</option><option value="receita">receita</option></select><button class="btn ghost" id="cfgAddGrupo">+ Criar grupo</button></div></div>
  <div class="card"><h2>Zona de risco</h2><div class="row"><button class="btn danger" id="cfgLimparTrans">Apagar todos os lançamentos</button><button class="btn danger" id="cfgReset">Reiniciar tudo</button></div></div>`;
@@ -1364,10 +1402,20 @@ function renderConfig(){
  el.querySelector('#cfgCSV').onclick=exportarCSV;
  el.querySelector('#cfgAddConta').onclick=()=>{const v=el.querySelector('#cfgNovaConta').value.trim();if(v&&!state.contas.includes(v)){state.contas.push(v);rerender();}};
  el.querySelectorAll('button[data-delconta]').forEach(b=>{b.onclick=()=>{const nome=state.contas[+b.dataset.delconta];if(SEED_CONTAS.includes(nome)&&!state.seedRemovidos.includes('conta:'+nome))state.seedRemovidos.push('conta:'+nome);state.contas.splice(+b.dataset.delconta,1);rerender();};});
+ el.querySelectorAll('button[data-cmove]').forEach(b=>{b.onclick=()=>{if(moverCategoria(b.dataset.cmove,+b.dataset.dir))rerender();};});
+ el.querySelectorAll('button[data-gmove]').forEach(b=>{b.onclick=()=>{if(moverGrupo(b.dataset.gmove,+b.dataset.dir))rerender();};});
+ let arrastando=null;
+ el.querySelectorAll('.cat-row').forEach(r=>{
+  r.addEventListener('dragstart',e=>{arrastando=r.dataset.cat;r.classList.add('arrastando');e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',r.dataset.cat);}catch(_){}} );
+  r.addEventListener('dragover',e=>{if(arrastando&&arrastando!==r.dataset.cat){e.preventDefault();e.dataTransfer.dropEffect='move';r.classList.add('drop-alvo');}});
+  r.addEventListener('dragleave',()=>r.classList.remove('drop-alvo'));
+  r.addEventListener('drop',e=>{e.preventDefault();r.classList.remove('drop-alvo');const de=arrastando||(e.dataTransfer&&e.dataTransfer.getData('text/plain'));arrastando=null;if(de&&moverCategoriaPara(de,r.dataset.cat))rerender();});
+  r.addEventListener('dragend',()=>{arrastando=null;el.querySelectorAll('.arrastando,.drop-alvo').forEach(x=>x.classList.remove('arrastando','drop-alvo'));});
+ });
  el.querySelectorAll('button[data-delregra]').forEach(b=>{b.onclick=()=>{delete state.regras[b.dataset.delregra];rerender();};});
  el.querySelectorAll('button[data-delcat]').forEach(b=>{b.onclick=()=>{const n=b.dataset.delcat;const usos=state.transacoes.filter(t=>t.categoria===n).length;if(!confirm(`Excluir a linha "${n}"?`+(usos?` ${usos} lançamento(s) ficarão sem categoria.`:'')))return;if(SEED_CATS.some(s=>s.nome===n)&&!state.seedRemovidos.includes('cat:'+n))state.seedRemovidos.push('cat:'+n);state.categorias=state.categorias.filter(c=>c.nome!==n);state.transacoes.forEach(t=>{if(t.categoria===n)t.categoria=null;});rerender();};});
- el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});rerender();};});
- el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});rerender();};
+ el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});normalizarCategorias();rerender();toast('Linha criada. Use ▲ ou arraste para posicionar.');};});
+ el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});normalizarCategorias();rerender();toast('Grupo criado. Use ▲ para subir na ordem.');};
  el.querySelector('#cfgLimparTrans').onclick=()=>{if(confirm('Apagar TODOS os lançamentos? O orçamento será mantido.')){state.transacoes=[];rerender();}};
  el.querySelector('#cfgReset').onclick=()=>{if(confirm('Apagar TUDO e voltar ao estado inicial?')&&confirm('Tem certeza? Exporte um backup antes!')){state=novoEstado();rerender();}};
 }
