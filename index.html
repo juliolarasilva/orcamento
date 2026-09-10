@@ -147,10 +147,10 @@ const SEED_VERSAO=2; // ⬆ incremente ao alterar SEED_CATS/SEED_CONTAS para pro
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[]};}
+function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[],contaSub:'',contaEmail:''};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};migrarSeed();return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};if(state.contaSub===undefined)state.contaSub='';if(state.contaEmail===undefined)state.contaEmail='';migrarSeed();return;}}catch(e){}state=novoEstado();}
 function migrarSeed(){
  if(!state.seedRemovidos)state.seedRemovidos=[];
  if((state.seedVersao||0)>=SEED_VERSAO)return;
@@ -1123,13 +1123,14 @@ function parseTextoNota(txt){
  return {valor,desc:(lin[0]||'').slice(0,40),categoria:''};
 }
 /* ================= GOOGLE DRIVE SYNC ================= */
-let driveToken=null,driveFileId=null,driveTimer=null;
+let driveToken=null,driveFileId=null,driveTimer=null,driveConta=null;
+const DRIVE_SCOPES='https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email';
 function driveStatus(s){const el=document.getElementById('driveStatus');if(el)el.textContent=s?'· ☁ '+s:'';}
 async function driveConectar(interativo){
  if(!state.driveClientId)return false;
  await carregarScript('https://accounts.google.com/gsi/client');
  return new Promise(res=>{
-  const tc=google.accounts.oauth2.initTokenClient({client_id:state.driveClientId,scope:'https://www.googleapis.com/auth/drive.appdata',
+  const tc=google.accounts.oauth2.initTokenClient({client_id:state.driveClientId,scope:DRIVE_SCOPES,
    callback:t=>{if(t&&t.access_token){driveToken=t.access_token;res(true);}else res(false);},
    error_callback:()=>res(false)});
   tc.requestAccessToken({prompt:interativo?'consent':''});
@@ -1141,6 +1142,42 @@ async function driveApi(url,opt={}){
  if(r.status===401){driveToken=null;throw new Error('sessão expirada — clique em ☁ para reconectar');}
  if(!r.ok)throw new Error('Drive HTTP '+r.status);
  return r;
+}
+async function driveIdentidade(){
+ try{
+  const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{'Authorization':'Bearer '+driveToken}});
+  if(!r.ok)return null;
+  const j=await r.json();
+  return (j&&j.sub)?{sub:j.sub,email:j.email||''}:null;
+ }catch(e){return null;}
+}
+function estadoTemDados(s){return !!(s&&((s.transacoes&&s.transacoes.length)||(s.anotacoes&&s.anotacoes.length)||(s.orcamento&&Object.keys(s.orcamento).length)));}
+function guardarEstadoConta(){if(state.contaSub){try{localStorage.setItem('orcFamiliar:'+state.contaSub,JSON.stringify(state));}catch(e){}}}
+function abrirEstadoConta(conta){
+ guardarEstadoConta();
+ const cid=state.driveClientId;
+ let novo=null;try{const s=localStorage.getItem('orcFamiliar:'+conta.sub);if(s)novo=JSON.parse(s);}catch(e){}
+ state=novo||novoEstado();
+ if(!state.driveClientId)state.driveClientId=cid;
+ if(!state.regras)state.regras={};if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};
+ state.contaSub=conta.sub;state.contaEmail=conta.email;
+ driveFileId=null;
+ try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){}
+}
+function perguntarDadosLocais(conta){
+ return new Promise(res=>{
+  let feito=false;const fim=v=>{if(feito)return;feito=true;fecharModal();res(v);};
+  modal(`<h3>Primeiro acesso desta conta</h3>
+  <p class="muted-sm">Voce conectou com <b>${esc(conta.email||'esta conta')}</b> e o Drive dela ainda nao tem nenhum arquivo do app — ou seja, e um primeiro acesso.</p>
+  <p class="muted-sm">Mas este navegador ja tem dados salvos (${state.transacoes.length} lancamento(s)). Se esses dados sao de outra familia, comece em branco: nada sera enviado para o Drive desta conta.</p>
+  <div class="row" style="margin-top:14px"><button class="btn" id="mdContaBranco">Comecar em branco (recomendado)</button><button class="btn sec" id="mdContaUsar">Usar os dados deste navegador</button><button class="btn ghost" id="mdContaCancel">Cancelar</button></div>`);
+  document.getElementById('mdContaBranco').onclick=()=>fim('branco');
+  document.getElementById('mdContaUsar').onclick=()=>fim('usar');
+  document.getElementById('mdContaCancel').onclick=()=>fim('cancelar');
+  const bg=document.getElementById('modalBg');
+  const obs=()=>{if(bg.classList.contains('hide'))fim('cancelar');};
+  new MutationObserver(obs).observe(bg,{attributes:true,attributeFilter:['class']});
+ });
 }
 async function driveBuscarArquivo(){
  const r=await driveApi("https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27orcamento-familiar.json%27&fields=files(id)");
@@ -1197,6 +1234,27 @@ async function driveSincronizar(interativo){
  try{
   driveStatus('conectando…');
   if(!driveToken){const ok=await driveConectar(interativo);if(!ok){driveStatus(interativo?'falha na conexão':'clique para conectar');return;}}
+  const conta=await driveIdentidade();
+  if(!conta){
+   driveToken=null;
+   if(!interativo){driveStatus('clique para conectar');return;}
+   throw new Error('não identifiquei a conta Google — clique em ☁ e autorize o acesso ao e-mail');
+  }
+  driveConta=conta;
+  if(state.contaSub&&state.contaSub!==conta.sub){
+   const anterior=state.contaEmail||'outra conta';
+   abrirEstadoConta(conta);
+   toast('Conta trocada: os dados de '+anterior+' ficaram guardados neste navegador. Agora usando '+conta.email+'.');
+  }else if(!state.contaSub){
+   driveStatus('verificando conta…');
+   const existente=await driveCarregar();
+   if(!existente&&estadoTemDados(state)){
+    const dec=await perguntarDadosLocais(conta);
+    if(dec==='cancelar'){driveStatus('não sincronizado');return;}
+    if(dec==='branco')abrirEstadoConta(conta);
+    else{state.contaSub=conta.sub;state.contaEmail=conta.email;}
+   }else{state.contaSub=conta.sub;state.contaEmail=conta.email;}
+  }
   driveStatus('baixando…');
   const remoto=await driveCarregar();
   const n=mesclarEstados(remoto);
@@ -1213,7 +1271,9 @@ function renderConfig(){
  <div class="card"><h2>Família</h2><div class="row"><input id="cfgFam" value="${esc(state.familia)}" class="flex1"><button class="btn ghost" id="cfgFamOk">Salvar</button></div></div>
  <div class="card"><h2>Sincronização Google Drive <span class="tag info" id="cfgDriveTag">${state.driveClientId?'configurado':'não configurado'}</span></h2>
   <p class="muted-sm" style="margin-bottom:10px">Sincroniza os dados entre aparelhos usando um arquivo no Google Drive de quem conecta — cada família vê apenas os próprios dados. O Client ID já vem preenchido; basta conectar. (Para usar outra credencial, edite abaixo.)</p>
-  <div class="row"><input id="cfgClientId" class="flex1" placeholder="xxxxx.apps.googleusercontent.com" value="${esc(state.driveClientId)}"><button class="btn ghost" id="cfgClientIdOk">Salvar</button><button class="btn" id="cfgDriveSync">☁ Conectar e sincronizar</button></div></div>
+  <div class="row"><input id="cfgClientId" class="flex1" placeholder="xxxxx.apps.googleusercontent.com" value="${esc(state.driveClientId)}"><button class="btn ghost" id="cfgClientIdOk">Salvar</button><button class="btn" id="cfgDriveSync">☁ Conectar e sincronizar</button></div>
+  <p class="muted-sm" style="margin-top:10px">Conta conectada: <b>${state.contaEmail?esc(state.contaEmail):'nenhuma'}</b></p>
+  <div class="row" style="margin-top:6px"><button class="btn sec" id="cfgDriveSair">Sair / trocar de conta</button><button class="btn danger" id="cfgDriveZerar">Recomeçar do zero nesta conta</button></div></div>
  <div class="card"><h2>Backup dos dados</h2>
   <p class="muted-sm" style="margin-bottom:10px">Os dados ficam salvos neste navegador. Exporte um arquivo .json regularmente como cópia de segurança — e use-o para compartilhar com a família ou abrir em outro computador.</p>
   <div class="row"><button class="btn" id="cfgExp">⬇ Exportar backup (.json)</button><button class="btn sec" id="cfgImp">⬆ Restaurar backup</button><button class="btn sec" id="cfgCSV">⬇ Lançamentos (.csv)</button></div></div>
@@ -1234,6 +1294,21 @@ function renderConfig(){
  el.querySelector('#cfgFamOk').onclick=()=>{state.familia=el.querySelector('#cfgFam').value;rerender();toast('Salvo.');};
  el.querySelector('#cfgClientIdOk').onclick=()=>{state.driveClientId=el.querySelector('#cfgClientId').value.trim();rerender();toast(state.driveClientId?'Client ID salvo.':'Client ID removido.');};
  el.querySelector('#cfgDriveSync').onclick=()=>driveSincronizar(true);
+ el.querySelector('#cfgDriveSair').onclick=()=>{if(!confirm('Sair da conta neste navegador? Os dados atuais ficam guardados e voltam quando você reconectar com a mesma conta.'))return;guardarEstadoConta();const cid=state.driveClientId;state=novoEstado();state.driveClientId=cid;driveToken=null;driveFileId=null;driveConta=null;driveStatus('clique para conectar');rerender();toast('Desconectado. Use o ☁ para conectar com outra conta.');};
+ el.querySelector('#cfgDriveZerar').onclick=async()=>{
+  if(!driveToken)return toast('Conecte primeiro no ☁.');
+  if(!confirm('Apagar os dados desta conta no Google Drive E neste navegador, começando em branco?'))return;
+  if(!confirm('Tem certeza? Exporte um backup antes se precisar.'))return;
+  try{
+   driveFileId=driveFileId||await driveBuscarArquivo();
+   if(driveFileId){await driveApi('https://www.googleapis.com/drive/v3/files/'+driveFileId,{method:'DELETE'});driveFileId=null;}
+   const cid=state.driveClientId,cs=state.contaSub,ce=state.contaEmail;
+   try{localStorage.removeItem('orcFamiliar:'+cs);}catch(e){}
+   state=novoEstado();state.driveClientId=cid;state.contaSub=cs;state.contaEmail=ce;
+   try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){}
+   rerender();toast('Zerado. Pode começar os lançamentos.');
+  }catch(e){toast('Erro: '+e.message);}
+ };
  el.querySelector('#cfgExp').onclick=exportarBackup;
  el.querySelector('#cfgImp').onclick=importarBackup;
  el.querySelector('#cfgCSV').onclick=exportarCSV;
@@ -1248,7 +1323,7 @@ function renderConfig(){
 }
 function download(nome,conteudo,tipo){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([conteudo],{type:tipo}));a.download=nome;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);}
 function exportarBackup(){download(`orcamento-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(state,null,1),'application/json');toast('Backup exportado.');}
-function importarBackup(){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=async()=>{try{const s=JSON.parse(await i.files[0].text());if(!s.categorias||!s.transacoes)throw new Error('formato inválido');state=s;if(!state.regras)state.regras={};rerender();toast('Backup restaurado.');}catch(e){toast('Erro: '+e.message);}};i.click();}
+function importarBackup(){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=async()=>{try{const s=JSON.parse(await i.files[0].text());if(!s.categorias||!s.transacoes)throw new Error('formato inválido');const cs=state.contaSub,ce=state.contaEmail,cid=state.driveClientId;state=s;if(!state.regras)state.regras={};state.contaSub=cs;state.contaEmail=ce;if(!state.driveClientId)state.driveClientId=cid;rerender();toast('Backup restaurado.');}catch(e){toast('Erro: '+e.message);}};i.click();}
 function exportarCSV(){const sep=';';let csv='﻿Data;Competencia;Fonte;Descricao;Valor;Tipo;Grupo;Categoria;Observacoes\n';
  state.transacoes.sort((a,b)=>a.data.localeCompare(b.data)).forEach(t=>{const c=catPorNome(t.categoria||'');
   csv+=[t.data.split('-').reverse().join('/'),t.comp,t.fonte,'"'+t.descricao.replace(/"/g,'""')+'"',String(t.valor.toFixed(2)).replace('.',','),c?.tipo||t.tipo,c?.grupo||'',t.categoria||'','"'+String(t.obs||'').replace(/"/g,'""')+'"'].join(sep)+'\n';});
