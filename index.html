@@ -1143,6 +1143,10 @@ async function driveApi(url,opt={}){
  if(!r.ok)throw new Error('Drive HTTP '+r.status);
  return r;
 }
+async function driveApagarArquivo(){
+ driveFileId=driveFileId||await driveBuscarArquivo();
+ if(driveFileId){await driveApi('https://www.googleapis.com/drive/v3/files/'+driveFileId,{method:'DELETE'});driveFileId=null;}
+}
 async function driveIdentidade(){
  try{
   const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{'Authorization':'Bearer '+driveToken}});
@@ -1167,16 +1171,30 @@ function abrirEstadoConta(conta){
 function perguntarDadosLocais(conta){
  return new Promise(res=>{
   let feito=false;const fim=v=>{if(feito)return;feito=true;fecharModal();res(v);};
-  modal(`<h3>Primeiro acesso desta conta</h3>
-  <p class="muted-sm">Voce conectou com <b>${esc(conta.email||'esta conta')}</b> e o Drive dela ainda nao tem nenhum arquivo do app — ou seja, e um primeiro acesso.</p>
-  <p class="muted-sm">Mas este navegador ja tem dados salvos (${state.transacoes.length} lancamento(s)). Se esses dados sao de outra familia, comece em branco: nada sera enviado para o Drive desta conta.</p>
-  <div class="row" style="margin-top:14px"><button class="btn" id="mdContaBranco">Comecar em branco (recomendado)</button><button class="btn sec" id="mdContaUsar">Usar os dados deste navegador</button><button class="btn ghost" id="mdContaCancel">Cancelar</button></div>`);
+  modal(`<h3>De quem sao os dados deste navegador?</h3>
+  <p class="muted-sm">Este navegador tem um orcamento salvo de <b>${esc(state.familia||'(sem nome)')}</b> com <b>${state.transacoes.length}</b> lancamento(s), ainda nao vinculado a nenhuma conta Google.</p>
+  <p class="muted-sm">Voce entrou como <b>${esc(conta.email||'esta conta')}</b>. Esses dados sao desta familia?</p>
+  <div class="row" style="margin-top:14px"><button class="btn" id="mdContaBranco">Nao — comecar em branco</button><button class="btn sec" id="mdContaUsar">Sim — usar estes dados</button><button class="btn ghost" id="mdContaCancel">Cancelar</button></div>`);
   document.getElementById('mdContaBranco').onclick=()=>fim('branco');
   document.getElementById('mdContaUsar').onclick=()=>fim('usar');
   document.getElementById('mdContaCancel').onclick=()=>fim('cancelar');
   const bg=document.getElementById('modalBg');
-  const obs=()=>{if(bg.classList.contains('hide'))fim('cancelar');};
-  new MutationObserver(obs).observe(bg,{attributes:true,attributeFilter:['class']});
+  new MutationObserver(()=>{if(bg.classList.contains('hide'))fim('cancelar');}).observe(bg,{attributes:true,attributeFilter:['class']});
+ });
+}
+function confirmarDadosRemotos(conta,remoto){
+ return new Promise(res=>{
+  let feito=false;const fim=v=>{if(feito)return;feito=true;fecharModal();res(v);};
+  const nt=(remoto.transacoes||[]).length;
+  modal(`<h3>O Drive desta conta ja tem um orcamento</h3>
+  <p class="muted-sm">O Google Drive de <b>${esc(conta.email||'esta conta')}</b> guarda um orcamento de <b>${esc(remoto.familia||'(sem nome)')}</b> com <b>${nt}</b> lancamento(s).</p>
+  <p class="muted-sm">Se esses dados sao de outra familia (enviados por engano), apague para comecar do zero. Nada e apagado no Drive de outras contas.</p>
+  <div class="row" style="margin-top:14px"><button class="btn sec" id="mdRemUsar">Sao meus — usar</button><button class="btn danger" id="mdRemApagar">Apagar e comecar do zero</button><button class="btn ghost" id="mdRemCancel">Cancelar</button></div>`);
+  document.getElementById('mdRemUsar').onclick=()=>fim('usar');
+  document.getElementById('mdRemApagar').onclick=()=>fim('apagar');
+  document.getElementById('mdRemCancel').onclick=()=>fim('cancelar');
+  const bg=document.getElementById('modalBg');
+  new MutationObserver(()=>{if(bg.classList.contains('hide'))fim('cancelar');}).observe(bg,{attributes:true,attributeFilter:['class']});
  });
 }
 async function driveBuscarArquivo(){
@@ -1274,11 +1292,17 @@ async function driveSincronizar(interativo){
   }else if(!state.contaSub){
    driveStatus('verificando conta…');
    const existente=await driveCarregar();
-   if(!existente&&estadoTemDados(state)){
+   if(estadoTemDados(state)){
     const dec=await perguntarDadosLocais(conta);
     if(dec==='cancelar'){driveStatus('não sincronizado');return;}
-    if(dec==='branco')abrirEstadoConta(conta);
-    else{state.contaSub=conta.sub;state.contaEmail=conta.email;}
+    if(dec==='branco'){
+     abrirEstadoConta(conta);
+     if(existente&&estadoTemDados(existente)){
+      const dec2=await confirmarDadosRemotos(conta,existente);
+      if(dec2==='cancelar'){driveStatus('não sincronizado');return;}
+      if(dec2==='apagar'){driveStatus('limpando o Drive…');await driveApagarArquivo();}
+     }
+    }else{state.contaSub=conta.sub;state.contaEmail=conta.email;}
    }else{state.contaSub=conta.sub;state.contaEmail=conta.email;}
   }
   driveStatus('baixando…');
@@ -1327,8 +1351,7 @@ function renderConfig(){
   if(!confirm('Apagar os dados desta conta no Google Drive E neste navegador, começando em branco?'))return;
   if(!confirm('Tem certeza? Exporte um backup antes se precisar.'))return;
   try{
-   driveFileId=driveFileId||await driveBuscarArquivo();
-   if(driveFileId){await driveApi('https://www.googleapis.com/drive/v3/files/'+driveFileId,{method:'DELETE'});driveFileId=null;}
+   await driveApagarArquivo();
    const cid=state.driveClientId,cs=state.contaSub,ce=state.contaEmail;
    try{localStorage.removeItem('orcFamiliar:'+cs);}catch(e){}
    state=novoEstado();state.driveClientId=cid;state.contaSub=cs;state.contaEmail=ce;
