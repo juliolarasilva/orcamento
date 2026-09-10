@@ -152,10 +152,10 @@ const SEED_VERSAO=2; // ⬆ incremente ao alterar SEED_CATS/SEED_CONTAS para pro
 const DRIVE_CLIENT_ID_PADRAO='1049391432426-0dal4ekc3lh9h67dg9s43972l949cbd4.apps.googleusercontent.com';
 const ANO_ATUAL=new Date().getFullYear();
 let state=null;
-function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[],contaSub:'',contaEmail:'',familiaDefinida:false,categoriasTS:0};}
+function novoEstado(){return {versao:1,familia:'Minha Família',ano:ANO_ATUAL,mes:new Date().getMonth(),categorias:JSON.parse(JSON.stringify(SEED_CATS)),contas:[...SEED_CONTAS],orcamento:{},transacoes:[],regras:{},ultimaFonte:'',driveClientId:DRIVE_CLIENT_ID_PADRAO,anotacoes:[],saldos:{},saldosOFX:{},saldosMeta:{},seedVersao:SEED_VERSAO,seedRemovidos:[],contaSub:'',contaEmail:'',familiaDefinida:false,categoriasTS:0,saldoLembrete:''};}
 function salvar(){try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){console.warn(e);}salvarTimestamp();driveAgendarSalvar();}
 function salvarTimestamp(){const el=document.getElementById('hdrSub');if(el)el.textContent=state.familia+' · salvo neste navegador';}
-function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};if(state.contaSub===undefined)state.contaSub='';if(state.contaEmail===undefined)state.contaEmail='';if(state.categoriasTS===undefined)state.categoriasTS=0;if(state.familiaDefinida===undefined)state.familiaDefinida=!!((state.familia&&state.familia!=='Minha Família')||estadoTemDados(state));migrarSeed();return;}}catch(e){}state=novoEstado();}
+function carregar(){try{const s=localStorage.getItem('orcFamiliar');if(s){state=JSON.parse(s);if(!state.regras)state.regras={};if(state.ultimaFonte===undefined)state.ultimaFonte='';if(!state.driveClientId)state.driveClientId=DRIVE_CLIENT_ID_PADRAO;if(!state.anotacoes)state.anotacoes=[];if(!state.saldos)state.saldos={};if(!state.saldosOFX)state.saldosOFX={};if(!state.saldosMeta)state.saldosMeta={};if(state.contaSub===undefined)state.contaSub='';if(state.contaEmail===undefined)state.contaEmail='';if(state.categoriasTS===undefined)state.categoriasTS=0;if(state.saldoLembrete===undefined)state.saldoLembrete='';if(state.familiaDefinida===undefined)state.familiaDefinida=!!((state.familia&&state.familia!=='Minha Família')||estadoTemDados(state));migrarSeed();return;}}catch(e){}state=novoEstado();}
 function migrarSeed(){
  if(!state.seedRemovidos)state.seedRemovidos=[];
  if((state.seedVersao||0)>=SEED_VERSAO)return;
@@ -1305,10 +1305,63 @@ function mesclarEstados(remoto){
  migrarSeed();
  return n;
 }
+function chaveMesAnterior(hoje){const d=new Date((hoje||new Date()).getTime());d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function compAnteriorDe(comp){const[a,m]=comp.split('-').map(Number);return m===1?((a-1)+'-12'):(a+'-'+String(m-1).padStart(2,'0'));}
+function pendenciaFechamento(hoje){
+ const mf=chaveMesAnterior(hoje);
+ if(state.saldoLembrete===mf)return null;
+ if(!estadoTemDados(state))return null;
+ const ccs=contasCorrentes();
+ if(!ccs.length)return null;
+ const faltam=ccs.filter(c=>saldoGet(mf,c)==null);
+ if(!faltam.length){state.saldoLembrete=mf;salvar();return null;}
+ return {comp:mf,ccs,faltam};
+}
+let lembrandoSaldo=false;
+function talvezLembrarSaldo(hoje){
+ if(lembrandoSaldo)return false;
+ const info=pendenciaFechamento(hoje);
+ if(!info)return false;
+ lembrandoSaldo=true;
+ const [ano,mm]=info.comp.split('-').map(Number);
+ const nome=MESES_FULL[mm-1]+'/'+ano;
+ const compAnt=compAnteriorDe(info.comp);
+ const brl=v=>String(v.toFixed(2)).replace('.',',');
+ const esperadoDe=c=>{const va=saldoGet(compAnt,c);if(va==null)return null;const m=movimentoConta(info.comp,c);return va+m.e-m.s;};
+ const linhas=info.ccs.map(c=>{
+  const vb=saldoGet(info.comp,c),esp=esperadoDe(c);
+  return `<div class="li-row"><span class="flex1">🏦 ${esc(c)}</span>${esp!=null?`<button class="mini" data-lsesp="${esc(c)}" title="Usar o saldo esperado" style="color:var(--acc)">⤵ ${fmt(esp)}</button>`:''}<input class="num" style="width:120px;text-align:right" data-ls="${esc(c)}" value="${vb!=null?brl(vb):''}" placeholder="${esp!=null?brl(esp):'0,00'}"></div>`;
+ }).join('');
+ modal(`<h3>Fechamento de ${nome}</h3>
+ <p class="muted-sm">O mês virou. Informe o saldo final de cada conta corrente em <b>${nome}</b> para o app conferir a conciliação. ${info.faltam.length} de ${info.ccs.length} conta(s) sem saldo.</p>
+ <div style="max-height:42vh;overflow:auto;margin-top:10px">${linhas}</div>
+ <div class="row" style="margin-top:14px"><button class="btn" id="lsSalvar">Salvar</button><button class="btn sec" id="lsAba">Abrir a aba Saldos</button><button class="btn ghost" id="lsDepois">Depois</button></div>`);
+ const box=document.getElementById('modalBox');
+ const encerra=()=>{state.saldoLembrete=info.comp;lembrandoSaldo=false;fecharModal();salvar();};
+ box.querySelectorAll('button[data-lsesp]').forEach(b=>{b.onclick=()=>{
+  const c=b.dataset.lsesp,esp=esperadoDe(c);if(esp==null)return;
+  const inp=box.querySelector('input[data-ls="'+CSS.escape(c)+'"]');
+  inp.value=brl(esp);inp.dataset.auto='1';};});
+ box.querySelector('#lsSalvar').onclick=()=>{
+  let n=0;
+  box.querySelectorAll('input[data-ls]').forEach(i=>{
+   const t=i.value.trim();if(t==='')return;
+   const v=parseValorBR(t);if(v==null||isNaN(v))return;
+   saldoSet(info.comp,i.dataset.ls,v);
+   if(!state.saldosMeta[info.comp])state.saldosMeta[info.comp]={};
+   state.saldosMeta[info.comp][i.dataset.ls]=i.dataset.auto?'auto':'manual';n++;});
+  encerra();rerender();toast(n?n+' saldo(s) de '+nome+' salvo(s).':'Nenhum saldo informado.');};
+ box.querySelector('#lsAba').onclick=()=>{state.ano=ano;state.mes=mm-1;encerra();irParaAba('saldos');};
+ box.querySelector('#lsDepois').onclick=()=>{encerra();toast('Ok — o Painel continua mostrando os saldos pendentes.');};
+ const bg=document.getElementById('modalBg');
+ new MutationObserver(()=>{if(bg.classList.contains('hide')&&lembrandoSaldo){lembrandoSaldo=false;state.saldoLembrete=info.comp;salvar();}}).observe(bg,{attributes:true,attributeFilter:['class']});
+ return true;
+}
+function avisosDeAbertura(){if(!talvezPerguntarFamilia())talvezLembrarSaldo();}
 let perguntandoFamilia=false;
 function talvezPerguntarFamilia(){
- if(perguntandoFamilia||state.familiaDefinida)return;
- if(estadoTemDados(state)){state.familiaDefinida=true;salvar();return;}
+ if(perguntandoFamilia||state.familiaDefinida)return false;
+ if(estadoTemDados(state)){state.familiaDefinida=true;salvar();return false;}
  perguntandoFamilia=true;
  modal(`<h3>Bem-vindo(a) ao Orçamento Familiar</h3>
  <p class="muted-sm">Para começar: como quer chamar a sua família? O nome aparece no topo do app e nas exportações. Dá para mudar depois em Configurações.</p>
@@ -1321,6 +1374,7 @@ function talvezPerguntarFamilia(){
   state.familiaDefinida=true;
   fecharModal();salvar();salvarTimestamp();rerender();
   if(nome)toast('Tudo pronto, '+nome+'!');
+  setTimeout(talvezLembrarSaldo,400);
  };
  document.getElementById('mdFamOk').onclick=()=>fim(inp.value.trim());
  document.getElementById('mdFamDepois').onclick=()=>fim('');
@@ -1328,6 +1382,7 @@ function talvezPerguntarFamilia(){
  const bg=document.getElementById('modalBg');
  new MutationObserver(()=>{if(bg.classList.contains('hide'))perguntandoFamilia=false;}).observe(bg,{attributes:true,attributeFilter:['class']});
  setTimeout(()=>{try{inp.focus();}catch(e){}},60);
+ return true;
 }
 async function driveSincronizar(interativo){
  if(!state.driveClientId){if(interativo)toast('Configure o Client ID do Google em Configurações.');return;}
@@ -1368,7 +1423,7 @@ async function driveSincronizar(interativo){
   try{localStorage.setItem('orcFamiliar',JSON.stringify(state));}catch(e){}
   salvarTimestamp();TABS[tabAtiva]();
   await driveSalvarAgora();
-  talvezPerguntarFamilia();
+  avisosDeAbertura();
  }catch(e){driveStatus('erro: '+e.message);}
 }
 /* ================= CONFIGURAÇÕES ================= */
@@ -1447,7 +1502,7 @@ function exportarCSV(){const sep=';';let csv='﻿Data;Competencia;Fonte;Descrica
 /* ================= INIT ================= */
 carregar();salvarTimestamp();renderPainel();
 document.getElementById('driveStatus').onclick=()=>driveSincronizar(true);
-if(state.driveClientId){driveStatus('clique para conectar');driveSincronizar(false).then(talvezPerguntarFamilia);}else talvezPerguntarFamilia();
+if(state.driveClientId){driveStatus('clique para conectar');driveSincronizar(false).then(avisosDeAbertura);}else avisosDeAbertura();
 window.addEventListener('beforeunload',salvar);
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
