@@ -473,25 +473,98 @@ function renderImportacao(){
  el.querySelectorAll('button[data-del]').forEach(b=>{b.onclick=()=>{if(confirm('Excluir este lançamento?')){state.transacoes=state.transacoes.filter(x=>x.id!==b.dataset.del);rerender();}};});
 }
 /* ================= REALIZADO (lançamentos classificados) ================= */
-let fRea={mes:'todos',cat:'todas',fonte:'todas',busca:''};
+let fRea={todosAnos:false,mes:'todos',cat:'todas',grupo:'todos',fonte:'todas',busca:'',tipo:'todos',vmin:'',vmax:'',dini:'',dfim:'',ordem:'data-desc',avancado:false};
+function limparFiltrosRea(){Object.assign(fRea,{todosAnos:false,mes:'todos',cat:'todas',grupo:'todos',fonte:'todas',busca:'',tipo:'todos',vmin:'',vmax:'',dini:'',dfim:''});}
+function filtrosAtivosRea(){
+ let n=0;
+ if(fRea.todosAnos)n++;
+ if(fRea.mes!=='todos')n++;
+ if(fRea.cat!=='todas')n++;
+ if(fRea.grupo!=='todos')n++;
+ if(fRea.fonte!=='todas')n++;
+ if(String(fRea.busca||'').trim())n++;
+ if(fRea.tipo!=='todos')n++;
+ if(String(fRea.vmin)!=='')n++;
+ if(String(fRea.vmax)!=='')n++;
+ if(fRea.dini)n++;
+ if(fRea.dfim)n++;
+ return n;
+}
+function filtrarRealizado(){
+ const bus=String(fRea.busca||'').toLowerCase().trim();
+ const nv=x=>{if(String(x)==='')return null;const v=parseValorBR(x);return (v==null||isNaN(v))?null:Math.abs(v);};
+ const vmin=nv(fRea.vmin),vmax=nv(fRea.vmax);
+ return state.transacoes.filter(t=>{
+  if(!t.comp)return false;
+  if(fRea.cat==='__sem__'){if(t.categoria)return false;}
+  else if(!t.categoria)return false;
+  const cat=catPorNome(t.categoria||'');
+  if(!fRea.todosAnos&&!t.comp.startsWith(state.ano+'-'))return false;
+  if(fRea.mes!=='todos'&&t.comp.slice(5,7)!==fRea.mes)return false;
+  if(fRea.cat!=='todas'&&fRea.cat!=='__sem__'&&t.categoria!==fRea.cat)return false;
+  if(fRea.grupo!=='todos'&&(!cat||cat.grupo!==fRea.grupo))return false;
+  if(fRea.fonte!=='todas'&&t.fonte!==fRea.fonte)return false;
+  if(bus&&!((t.descricao+' '+(t.obs||'')+' '+(t.categoria||'')+' '+(t.fonte||'')).toLowerCase().includes(bus)))return false;
+  if(fRea.tipo==='receita'&&!(cat&&cat.tipo==='receita'))return false;
+  if(fRea.tipo==='despesa'&&!(cat&&cat.tipo==='despesa'))return false;
+  if(fRea.tipo==='transferencia'&&!(cat&&cat.tipo==='transferencia'))return false;
+  if(fRea.tipo==='estorno'&&!(t.valor<0))return false;
+  const av=Math.abs(t.valor);
+  if(vmin!=null&&av<vmin-0.005)return false;
+  if(vmax!=null&&av>vmax+0.005)return false;
+  if(fRea.dini&&t.data<fRea.dini)return false;
+  if(fRea.dfim&&t.data>fRea.dfim)return false;
+  return true;});
+}
+function ordenarRealizado(arr){
+ const byData=(a,b)=>b.data.localeCompare(a.data);
+ const cmp={'data-desc':byData,
+  'data-asc':(a,b)=>a.data.localeCompare(b.data),
+  'valor-desc':(a,b)=>Math.abs(b.valor)-Math.abs(a.valor)||byData(a,b),
+  'valor-asc':(a,b)=>Math.abs(a.valor)-Math.abs(b.valor)||byData(a,b),
+  'desc-asc':(a,b)=>String(a.descricao||'').localeCompare(String(b.descricao||''),'pt-BR')||byData(a,b),
+  'cat-asc':(a,b)=>String(a.categoria||'').localeCompare(String(b.categoria||''),'pt-BR')||byData(a,b)};
+ return arr.sort(cmp[fRea.ordem]||byData);
+}
+function totaisRealizado(lista){
+ let rec=0,desp=0;
+ lista.forEach(t=>{const c=catPorNome(t.categoria||'');if(c&&c.tipo==='receita')rec+=t.valor;else if(!c||c.tipo==='despesa')desp+=t.valor;});
+ return {rec,desp,saldo:rec-desp};
+}
 function renderRealizado(){
  const ano=state.ano;
  const pend=state.transacoes.filter(t=>!t.categoria).length;
- const trans=state.transacoes.filter(t=>t.categoria&&t.comp&&t.comp.startsWith(ano+'-'))
-  .filter(t=>fRea.mes==='todos'||t.comp.slice(5,7)===fRea.mes)
-  .filter(t=>fRea.cat==='todas'||t.categoria===fRea.cat)
-  .filter(t=>fRea.fonte==='todas'||t.fonte===fRea.fonte)
-  .filter(t=>!fRea.busca||(t.descricao+' '+(t.obs||'')).toLowerCase().includes(fRea.busca.toLowerCase()))
-  .sort((a,b)=>b.data.localeCompare(a.data));
- const totalFiltro=trans.reduce((s,t)=>s+(catPorNome(t.categoria||'')?.tipo==='receita'?t.valor:-t.valor),0);
+ const trans=ordenarRealizado(filtrarRealizado());
+ const T=totaisRealizado(trans);
+ const nAtivos=filtrosAtivosRea();
  const catOpts=c=>{let h='<option value="">— escolher —</option>';grupos().forEach(g=>{h+=`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option ${i.nome===c?'selected':''}>${esc(i.nome)}</option>`).join('')+'</optgroup>';});return h;};
+ const semCat=state.transacoes.filter(t=>!t.categoria&&t.comp).length;
  let h=`<div class="card"><div class="row">
-  <label>Ano <select id="rAno">${anosDisponiveis().map(a=>`<option ${a===ano?'selected':''}>${a}</option>`).join('')}</select></label>
+  <label>Ano <select id="rAno"><option value="todos" ${fRea.todosAnos?'selected':''}>Todos</option>${anosDisponiveis().map(a=>`<option ${!fRea.todosAnos&&a===ano?'selected':''}>${a}</option>`).join('')}</select></label>
   <label>Mês <select id="rMes"><option value="todos">Todos</option>${MESES_FULL.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${fRea.mes===String(i+1).padStart(2,'0')?'selected':''}>${m}</option>`).join('')}</select></label>
-  <label>Categoria <select id="rCat"><option value="todas">Todas</option>${state.categorias.map(c=>`<option ${fRea.cat===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></label>
+  <label>Categoria <select id="rCat"><option value="todas">Todas</option><option value="__sem__" ${fRea.cat==='__sem__'?'selected':''}>— sem categoria (${semCat}) —</option>${grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(c=>`<option ${fRea.cat===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')+`</optgroup>`).join('')}</select></label>
   <label>Fonte <select id="rFonte"><option value="todas">Todas</option>${state.contas.map(c=>`<option ${fRea.fonte===c?'selected':''}>${esc(c)}</option>`).join('')}</select></label>
-  <input id="rBusca" placeholder="🔍 buscar descrição" value="${esc(fRea.busca)}" class="flex1" style="min-width:160px">
-  <span class="tag info">${trans.length} lançamentos · ${fmt(totalFiltro)}</span>
+  <input id="rBusca" placeholder="🔍 descrição, observação, categoria…" value="${esc(fRea.busca)}" class="flex1" style="min-width:180px">
+  <button class="btn ghost" id="rMais" style="padding:4px 10px;font-size:13px">⚙ Mais filtros${nAtivos?` <span class="tag info" style="margin-left:4px">${nAtivos}</span>`:''}</button>
+ </div>
+ <div class="row ${fRea.avancado?'':'hide'}" id="rAvancado" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px">
+  <label>Grupo <select id="rGrupo"><option value="todos">Todos</option>${grupos().map(g=>`<option ${fRea.grupo===g.nome?'selected':''}>${esc(g.nome)}</option>`).join('')}</select></label>
+  <label>Tipo <select id="rTipo">${[['todos','Todos'],['receita','Receitas'],['despesa','Despesas'],['transferencia','Transferências'],['estorno','Estornos (valor negativo)']].map(([v,r])=>`<option value="${v}" ${fRea.tipo===v?'selected':''}>${r}</option>`).join('')}</select></label>
+  <label>Valor de <input id="rVmin" class="num" style="width:100px" placeholder="0,00" value="${esc(String(fRea.vmin))}"></label>
+  <label>até <input id="rVmax" class="num" style="width:100px" placeholder="sem limite" value="${esc(String(fRea.vmax))}"></label>
+  <label>Data de <input id="rDini" type="date" value="${esc(fRea.dini)}"></label>
+  <label>até <input id="rDfim" type="date" value="${esc(fRea.dfim)}"></label>
+  <label>Ordenar <select id="rOrdem">${[['data-desc','Data ↓ (recentes)'],['data-asc','Data ↑ (antigos)'],['valor-desc','Valor ↓ (maiores)'],['valor-asc','Valor ↑ (menores)'],['desc-asc','Descrição A–Z'],['cat-asc','Categoria A–Z']].map(([v,r])=>`<option value="${v}" ${fRea.ordem===v?'selected':''}>${r}</option>`).join('')}</select></label>
+  <button class="btn ghost" id="rLimpar" style="padding:4px 10px;font-size:13px">✕ Limpar filtros</button>
+  <button class="btn sec" id="rCSV" style="padding:4px 10px;font-size:13px">⬇ CSV do resultado</button>
+ </div>
+ <div class="row" style="margin-top:10px">
+  <span class="tag info">${trans.length} lançamento(s)</span>
+  ${T.rec?`<span class="tag ok">entradas ${fmt(T.rec)}</span>`:''}
+  ${T.desp?`<span class="tag warn">saídas ${fmt(T.desp)}</span>`:''}
+  <span class="tag ${T.saldo>=0?'ok':'warn'}">saldo ${fmt(T.saldo)}</span>
+  ${nAtivos?`<button class="mini" id="rLimpar2" style="color:var(--acc)">✕ limpar ${nAtivos} filtro(s)</button>`:''}
+  <span class="flex1"></span>
   ${pend?`<span class="tag warn" id="rPend" style="cursor:pointer" title="Ir para a Importação">⚠ ${pend} a classificar na Importação</span>`:''}
   <button class="btn danger" id="rDelMes" style="padding:4px 10px;font-size:13px" title="Excluir todos os lançamentos de um mês">🗑 Excluir mês</button>
  </div></div>
@@ -506,11 +579,23 @@ function renderRealizado(){
   <td><button class="mini" data-del="${t.id}" title="Excluir">🗑</button></td></tr>`;});
  h+='</tbody></table></div>';
  const el=document.getElementById('tab-realizado');el.innerHTML=h;
- el.querySelector('#rAno').onchange=e=>{state.ano=+e.target.value;rerender();};
+ el.querySelector('#rAno').onchange=e=>{if(e.target.value==='todos'){fRea.todosAnos=true;renderRealizado();}else{fRea.todosAnos=false;state.ano=+e.target.value;rerender();}};
  el.querySelector('#rMes').onchange=e=>{fRea.mes=e.target.value;renderRealizado();};
  el.querySelector('#rCat').onchange=e=>{fRea.cat=e.target.value;renderRealizado();};
  el.querySelector('#rFonte').onchange=e=>{fRea.fonte=e.target.value;renderRealizado();};
  el.querySelector('#rBusca').oninput=e=>{fRea.busca=e.target.value;clearTimeout(window.__bt);window.__bt=setTimeout(renderRealizado,300);};
+ el.querySelector('#rMais').onclick=()=>{fRea.avancado=!fRea.avancado;renderRealizado();};
+ el.querySelector('#rGrupo').onchange=e=>{fRea.grupo=e.target.value;renderRealizado();};
+ el.querySelector('#rTipo').onchange=e=>{fRea.tipo=e.target.value;renderRealizado();};
+ el.querySelector('#rOrdem').onchange=e=>{fRea.ordem=e.target.value;renderRealizado();};
+ el.querySelector('#rVmin').onchange=e=>{fRea.vmin=e.target.value.trim();renderRealizado();};
+ el.querySelector('#rVmax').onchange=e=>{fRea.vmax=e.target.value.trim();renderRealizado();};
+ el.querySelector('#rDini').onchange=e=>{fRea.dini=e.target.value;renderRealizado();};
+ el.querySelector('#rDfim').onchange=e=>{fRea.dfim=e.target.value;renderRealizado();};
+ el.querySelector('#rCSV').onclick=()=>exportarCSVLista(trans,'lancamentos-filtrados.csv');
+ const limpar=()=>{limparFiltrosRea();renderRealizado();toast('Filtros limpos.');};
+ el.querySelector('#rLimpar').onclick=limpar;
+ const l2=el.querySelector('#rLimpar2');if(l2)l2.onclick=limpar;
  const rp=el.querySelector('#rPend');if(rp)rp.onclick=()=>irParaAba('importacao');
  el.querySelector('#rDelMes').onclick=modalExcluirMes;
  el.querySelectorAll('input[data-obs]').forEach(i=>{i.onchange=()=>{const t=state.transacoes.find(x=>x.id===i.dataset.obs);if(t){t.obs=i.value.trim();salvar();}};});
@@ -1495,10 +1580,11 @@ function renderConfig(){
 function download(nome,conteudo,tipo){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([conteudo],{type:tipo}));a.download=nome;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);}
 function exportarBackup(){download(`orcamento-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(state,null,1),'application/json');toast('Backup exportado.');}
 function importarBackup(){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=async()=>{try{const s=JSON.parse(await i.files[0].text());if(!s.categorias||!s.transacoes)throw new Error('formato inválido');const cs=state.contaSub,ce=state.contaEmail,cid=state.driveClientId;state=s;if(!state.regras)state.regras={};state.contaSub=cs;state.contaEmail=ce;if(!state.driveClientId)state.driveClientId=cid;rerender();toast('Backup restaurado.');}catch(e){toast('Erro: '+e.message);}};i.click();}
-function exportarCSV(){const sep=';';let csv='﻿Data;Competencia;Fonte;Descricao;Valor;Tipo;Grupo;Categoria;Observacoes\n';
- state.transacoes.sort((a,b)=>a.data.localeCompare(b.data)).forEach(t=>{const c=catPorNome(t.categoria||'');
+function exportarCSVLista(lista,nome){const sep=';';let csv='﻿Data;Competencia;Fonte;Descricao;Valor;Tipo;Grupo;Categoria;Observacoes\n';
+ lista.forEach(t=>{const c=catPorNome(t.categoria||'');
   csv+=[t.data.split('-').reverse().join('/'),t.comp,t.fonte,'"'+t.descricao.replace(/"/g,'""')+'"',String(t.valor.toFixed(2)).replace('.',','),c?.tipo||t.tipo,c?.grupo||'',t.categoria||'','"'+String(t.obs||'').replace(/"/g,'""')+'"'].join(sep)+'\n';});
- download('lancamentos.csv',csv,'text/csv');toast('CSV exportado.');}
+ download(nome||'lancamentos.csv',csv,'text/csv');toast(lista.length+' lancamento(s) exportado(s).');}
+function exportarCSV(){exportarCSVLista(state.transacoes.slice().sort((a,b)=>a.data.localeCompare(b.data)),'lancamentos.csv');}
 /* ================= INIT ================= */
 carregar();salvarTimestamp();renderPainel();
 document.getElementById('driveStatus').onclick=()=>driveSincronizar(true);
