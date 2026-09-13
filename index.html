@@ -230,7 +230,12 @@ function moverGrupo(nome,dir){
 function grupos(){const ordem=[];const map={};state.categorias.forEach(c=>{if(!map[c.grupo]){map[c.grupo]={nome:c.grupo,tipo:c.tipo,itens:[]};ordem.push(map[c.grupo]);}map[c.grupo].itens.push(c);});return ordem;}
 function orcGet(ano,cat){const a=state.orcamento[ano];if(!a||!a[cat])return Array(12).fill(0);return a[cat];}
 function orcSet(ano,cat,mes,val){if(!state.orcamento[ano])state.orcamento[ano]={};if(!state.orcamento[ano][cat])state.orcamento[ano][cat]=Array(12).fill(0);state.orcamento[ano][cat][mes]=val;}
-function realPorCatMes(ano){const out={};state.transacoes.forEach(t=>{if(!t.comp)return;const[y,m]=t.comp.split('-').map(Number);if(y!==ano)return;const cat=t.categoria||'__sem__';if(!out[cat])out[cat]=Array(12).fill(0);out[cat][m-1]+=t.valor;});return out;}
+/* Um lancamento no sentido contrario ao da categoria ENTRA COMO REDUTOR:
+   reembolso de terceiro, entrada de financiamento numa categoria de obra, estorno de salario etc.
+   O fluxo de caixa (aba Saldos) continua usando o tipo original do lancamento. */
+function valorNaCategoria(t){return tipoCompativel(t.tipo,t.categoria)?t.valor:-t.valor;}
+function ehRedutor(t){return !!(t&&t.categoria&&!tipoCompativel(t.tipo,t.categoria));}
+function realPorCatMes(ano){const out={};state.transacoes.forEach(t=>{if(!t.comp)return;const[y,m]=t.comp.split('-').map(Number);if(y!==ano)return;const cat=t.categoria||'__sem__';if(!out[cat])out[cat]=Array(12).fill(0);out[cat][m-1]+=valorNaCategoria(t);});return out;}
 /* ================= NAVEGAÇÃO ================= */
 const TABS={painel:renderPainel,lancar:renderLancar,orcamento:renderOrcamento,importacao:renderImportacao,realizado:renderRealizado,realanual:renderRealAnual,saldos:renderSaldos,config:renderConfig};
 let tabAtiva='painel';
@@ -509,7 +514,7 @@ function filtrarRealizado(){
   if(fRea.tipo==='despesa'&&!(cat&&cat.tipo==='despesa'))return false;
   if(fRea.tipo==='transferencia'&&!(cat&&cat.tipo==='transferencia'))return false;
   if(fRea.tipo==='estorno'&&!(t.valor<0))return false;
-  if(fRea.tipo==='conflito'&&!conflitoTipo(t))return false;
+  if(fRea.tipo==='redutor'&&!ehRedutor(t))return false;
   const av=Math.abs(t.valor);
   if(vmin!=null&&av<vmin-0.005)return false;
   if(vmax!=null&&av>vmax+0.005)return false;
@@ -529,7 +534,7 @@ function ordenarRealizado(arr){
 }
 function totaisRealizado(lista){
  let rec=0,desp=0;
- lista.forEach(t=>{const c=catPorNome(t.categoria||'');if(c&&c.tipo==='receita')rec+=t.valor;else if(!c||c.tipo==='despesa')desp+=t.valor;});
+ lista.forEach(t=>{const c=catPorNome(t.categoria||'');const v=valorNaCategoria(t);if(c&&c.tipo==='receita')rec+=v;else if(!c||c.tipo==='despesa')desp+=v;});
  return {rec,desp,saldo:rec-desp};
 }
 function renderRealizado(){
@@ -550,7 +555,7 @@ function renderRealizado(){
  </div>
  <div class="row ${fRea.avancado?'':'hide'}" id="rAvancado" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px">
   <label>Grupo <select id="rGrupo"><option value="todos">Todos</option>${grupos().map(g=>`<option ${fRea.grupo===g.nome?'selected':''}>${esc(g.nome)}</option>`).join('')}</select></label>
-  <label>Tipo <select id="rTipo">${[['todos','Todos'],['receita','Receitas'],['despesa','Despesas'],['transferencia','Transferências'],['estorno','Estornos (valor negativo)'],['conflito','⚠ Tipo divergente da categoria']].map(([v,r])=>`<option value="${v}" ${fRea.tipo===v?'selected':''}>${r}</option>`).join('')}</select></label>
+  <label>Tipo <select id="rTipo">${[['todos','Todos'],['receita','Receitas'],['despesa','Despesas'],['transferencia','Transferências'],['estorno','Estornos (valor negativo)'],['redutor','↩ Redutores (abatem a categoria)']].map(([v,r])=>`<option value="${v}" ${fRea.tipo===v?'selected':''}>${r}</option>`).join('')}</select></label>
   <label>Valor de <input id="rVmin" class="num" style="width:100px" placeholder="0,00" value="${esc(String(fRea.vmin))}"></label>
   <label>até <input id="rVmax" class="num" style="width:100px" placeholder="sem limite" value="${esc(String(fRea.vmax))}"></label>
   <label>Data de <input id="rDini" type="date" value="${esc(fRea.dini)}"></label>
@@ -573,8 +578,8 @@ function renderRealizado(){
  trans.forEach(t=>{const cat=catPorNome(t.categoria||'');const rec=cat?.tipo==='receita';
   h+=`<tr><td class="l mut">${t.data.split('-').reverse().join('/')}</td>
   <td class="l"><select data-comp="${t.id}" style="font-size:12px">${compOpcoes(t.comp)}</select></td>
-  <td class="l fonte-pill">${esc(t.fonte)}</td><td class="l" title="${esc(t.descricao)}">${esc(t.descricao.slice(0,48))}${conflitoTipo(t)?` <span class="tag warn" title="O extrato traz este lançamento como ${t.tipo==='receita'?'entrada':'saída'}, mas a categoria é de ${(catPorNome(t.categoria)||{}).tipo}">⚠ ${t.tipo==='receita'?'entrada':'saída'}</span>`:''}</td>
-  <td class="${rec?'pos':(t.valor<0?'pos':'')}">${rec?'+':''}${fmt(t.valor)}</td>
+  <td class="l fonte-pill">${esc(t.fonte)}</td><td class="l" title="${esc(t.descricao)}">${esc(t.descricao.slice(0,48))}${ehRedutor(t)?` <span class="tag info" title="${t.tipo==='receita'?'Entrada':'Saída'} numa categoria de ${(catPorNome(t.categoria)||{}).tipo}: abate ${fmt(t.valor)} do total da categoria (o saldo da conta continua contando como ${t.tipo==='receita'?'entrada':'saída'}).">↩ redutor</span>`:''}</td>
+  <td class="${(rec&&!ehRedutor(t))||valorNaCategoria(t)<0?'pos':''}">${ehRedutor(t)?'−':(rec?'+':'')}${fmt(Math.abs(t.valor))}</td>
   <td class="l"><select data-cat="${t.id}" style="width:100%">${catOpts(t.categoria)}</select></td>
   <td class="l"><input data-obs="${t.id}" value="${esc(t.obs||'')}" placeholder="anotação…" style="width:100%;font-size:12px"></td>
   <td><button class="mini" data-del="${t.id}" title="Excluir">🗑</button></td></tr>`;});
@@ -687,10 +692,10 @@ function finalizarNovaCategoria(nome){
 function categorizar(id,catNome){
  const t=state.transacoes.find(x=>x.id===id);if(!t)return;
  t.categoria=catNome||null;
- if(catNome&&!tipoCompativel(t.tipo,catNome))toast('⚠ Atenção: lançamento de '+(t.tipo==='receita'?'entrada':'saída')+' classificado numa categoria de '+(catPorNome(catNome)||{}).tipo+'.');
+ if(catNome&&!tipoCompativel(t.tipo,catNome))toast('↩ Entrará como redutor de "'+catNome+'" (abate '+fmt(t.valor)+').');
  if(catNome){const chave=normDesc(t.descricao);
   if(chave.length>=4){state.regras[chave]=catNome;
-   const similares=state.transacoes.filter(x=>!x.categoria&&x.id!==id&&normDesc(x.descricao)===chave&&tipoCompativel(x.tipo,catNome));
+   const similares=state.transacoes.filter(x=>!x.categoria&&x.id!==id&&normDesc(x.descricao)===chave);
    similares.forEach(x=>x.categoria=catNome);
    if(similares.length)toast(`Regra criada: ${similares.length} lançamento(s) similar(es) categorizados automaticamente.`);}}
  rerender();}
@@ -702,11 +707,9 @@ function tipoCompativel(tipoLanc,catNome){
  if(c.tipo==='transferencia')return true;
  return c.tipo===(tipoLanc==='receita'?'receita':'despesa');
 }
-function conflitoTipo(t){return !!(t&&t.categoria&&!tipoCompativel(t.tipo,t.categoria));}
 function aplicarRegras(t){if(t.categoria)return t;const chave=normDesc(t.descricao);
  const cabe=v=>tipoCompativel(t.tipo,v);
- if(state.regras[chave]&&cabe(state.regras[chave])){t.categoria=state.regras[chave];return t;}
- if(state.regras[chave])return t;
+ if(state.regras[chave]){t.categoria=state.regras[chave];return t;}
  // 2a passada: so com chave longa e por prefixo (evita "PIX TRANSF" capturar todo PIX)
  for(const[k,v]of Object.entries(state.regras)){
   if(k.length<12)continue;
@@ -1038,10 +1041,11 @@ function modalPreview(regs){
  document.getElementById('pvInverter').onclick=()=>{regs.forEach(r=>{r.tipo=r.tipo==='receita'?'despesa':'receita';});document.querySelectorAll('td[data-tipo]').forEach(td=>{const r=regs.find(x=>x._id===td.dataset.tipo);td.innerHTML=r.tipo==='receita'?'<span class="pos">entrada</span>':'saída';});};
  document.getElementById('pvOk').onclick=()=>{
   const fonte=document.getElementById('pvFonte').value,compSel=document.getElementById('pvComp').value;
-  let n=0;
+  let n=0,nRed=0;
   regs.filter(r=>r._inc).forEach(r=>{
    state.transacoes.push({id:r._id,data:r.data,comp:compSel==='auto'?compDe(r.data):compSel,fonte,descricao:r.descricao,valor:r.valor,tipo:r.tipo,categoria:r.categoria||null,obs:r._obsAnot||''});
    if(r._anot){const an=state.anotacoes.find(x=>x.id===r._anot);if(an)an.usadaEm=r._id;}
+   if(r.categoria&&!tipoCompativel(r.tipo,r.categoria))nRed++;
    if(r.categoria){const k=normDesc(r.descricao);if(k.length>=4&&!state.regras[k])state.regras[k]=r.categoria;}
    n++;});
   if(n){const comps=regs.filter(r=>r._inc).map(r=>compSel==='auto'?compDe(r.data):compSel);
@@ -1058,7 +1062,8 @@ function modalPreview(regs){
    state.saldosMeta[lc][fonte]='ofx';
    toast('🏦 Saldo de '+fonte+' capturado do extrato ('+led._ledger.data.split('-').reverse().join('/')+'): '+fmt(led._ledger.valor));
   }
-  fecharModal();rerender();toast(n+' lançamento(s) importado(s) — exibindo '+state.ano+'.');};}
+  fecharModal();rerender();toast(n+' lançamento(s) importado(s) — exibindo '+state.ano+'.');
+  if(nRed)setTimeout(()=>toast('↩ '+nRed+' lançamento(s) entraram como redutor de categoria (sentido oposto). Filtre por "Redutores" no Realizado para conferir.'),1200);};}
 /* ============ IMPORTAÇÃO REALIZADO (multi-conta / multi-mês) ============ */
 const normKey=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
 const MES_ABREV={JAN:1,FEV:2,MAR:3,ABR:4,MAI:5,JUN:6,JUL:7,AGO:8,SET:9,OUT:10,NOV:11,DEZ:12};
