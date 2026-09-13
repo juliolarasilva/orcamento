@@ -537,7 +537,7 @@ function renderRealizado(){
  const trans=ordenarRealizado(filtrarRealizado());
  const T=totaisRealizado(trans);
  const nAtivos=filtrosAtivosRea();
- const catOpts=c=>{let h='<option value="">— escolher —</option>';grupos().forEach(g=>{h+=`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option ${i.nome===c?'selected':''}>${esc(i.nome)}</option>`).join('')+'</optgroup>';});return h;};
+ const catOpts=c=>{let h='<option value="__nova__">➕ Criar nova categoria…</option><option value="">— escolher —</option>';grupos().forEach(g=>{h+=`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option ${i.nome===c?'selected':''}>${esc(i.nome)}</option>`).join('')+'</optgroup>';});return h;};
  const semCat=state.transacoes.filter(t=>!t.categoria&&t.comp).length;
  let h=`<div class="card"><div class="row">
   <label>Ano <select id="rAno"><option value="todos" ${fRea.todosAnos?'selected':''}>Todos</option>${anosDisponiveis().map(a=>`<option ${!fRea.todosAnos&&a===ano?'selected':''}>${a}</option>`).join('')}</select></label>
@@ -599,7 +599,7 @@ function renderRealizado(){
  const rp=el.querySelector('#rPend');if(rp)rp.onclick=()=>irParaAba('importacao');
  el.querySelector('#rDelMes').onclick=modalExcluirMes;
  el.querySelectorAll('input[data-obs]').forEach(i=>{i.onchange=()=>{const t=state.transacoes.find(x=>x.id===i.dataset.obs);if(t){t.obs=i.value.trim();salvar();}};});
- el.querySelectorAll('select[data-cat]').forEach(s=>{s.onchange=()=>categorizar(s.dataset.cat,s.value);});
+ el.querySelectorAll('select[data-cat]').forEach(s=>{s.onchange=()=>{if(s.value==='__nova__')return irCriarCategoria(s.dataset.cat);categorizar(s.dataset.cat,s.value);};});
  el.querySelectorAll('select[data-comp]').forEach(s=>{s.onchange=()=>{const t=state.transacoes.find(x=>x.id===s.dataset.comp);if(t){t.comp=s.value;rerender();}};});
  el.querySelectorAll('button[data-del]').forEach(b=>{b.onclick=()=>{if(confirm('Excluir este lançamento?')){state.transacoes=state.transacoes.filter(x=>x.id!==b.dataset.del);rerender();}};});
 }
@@ -658,6 +658,31 @@ function renderRealAnual(){
  const rp=el.querySelector('#raPend');if(rp)rp.onclick=()=>irParaAba('importacao');
 }
 function compOpcoes(sel){const[y]=sel.split('-');const ys=[+y-1,+y,+y+1];let h='';ys.forEach(yy=>{for(let m=1;m<=12;m++){const v=`${yy}-${String(m).padStart(2,'0')}`;h+=`<option value="${v}" ${v===sel?'selected':''}>${MESES[m-1]}/${yy}</option>`;}});return h;}
+let catPendente=null;
+function cancelarCatPendente(){catPendente=null;if(tabAtiva==='config')renderConfig();}
+function irCriarCategoria(id){
+ const t=state.transacoes.find(x=>x.id===id);
+ catPendente=t?{id:t.id,descricao:t.descricao}:null;
+ irParaAba('config');
+ setTimeout(()=>{
+  const card=[...document.querySelectorAll('#tab-config .card')].find(c=>/Categorias do orçamento/.test(c.textContent));
+  if(!card)return;
+  try{card.scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}
+  const inp=card.querySelector('input[data-novacat]');
+  if(inp)setTimeout(()=>{try{inp.focus();}catch(e){}},350);
+ },60);
+}
+function finalizarNovaCategoria(nome){
+ normalizarCategorias();marcarCategorias();
+ if(catPendente){
+  const alvo=catPendente;catPendente=null;
+  categorizar(alvo.id,nome);
+  irParaAba('realizado');
+  toast('Categoria "'+nome+'" criada e aplicada ao lançamento.');
+  return;
+ }
+ rerender();toast('Linha criada. Use ▲ ou arraste para posicionar.');
+}
 function categorizar(id,catNome){
  const t=state.transacoes.find(x=>x.id===id);if(!t)return;
  t.categoria=catNome||null;
@@ -1531,6 +1556,7 @@ function renderConfig(){
   <div style="max-height:240px;overflow:auto">${Object.entries(state.regras).sort().map(([k,v])=>`<div class="li-row"><span class="flex1" style="font-size:12px">${esc(k.slice(0,38))}</span><span class="tag ok">${esc(v)}</span><button class="mini" data-delregra="${esc(k)}">🗑</button></div>`).join('')||'<span class="muted-sm">Nenhuma regra ainda.</span>'}</div></div>
  </div>
  <div class="card"><h2>Categorias do orçamento</h2>
+  ${catPendente?`<div class="row" style="background:var(--soft);border:1px solid var(--acc2);border-radius:8px;padding:8px 10px;margin-bottom:10px"><span class="flex1">Classificando <b>${esc(String(catPendente.descricao||'').slice(0,42))}</b> — a próxima linha que você criar será aplicada a esse lançamento.</span><button class="mini" id="cfgCancelaPend" style="color:var(--red)">✕ cancelar</button></div>`:''}
   <p class="muted-sm" style="margin-bottom:10px">Grupos organizam o painel; as linhas recebem orçamento e lançamentos. Arraste uma linha pelo ⠿ (ou use ▲ ▼) para mudar a ordem — ela vale no Painel, no Orçamento e no Real Anual.</p>
   <div class="cfg-grid">${grupos().map((g,gi,ga)=>`<div><div class="grupo-cab"><b class="flex1">${esc(g.nome)}</b> <span class="tag ${g.tipo==='receita'?'ok':g.tipo==='transferencia'?'info':'warn'}">${g.tipo}</span><button class="mini" data-gmove="${esc(g.nome)}" data-dir="-1" title="Subir grupo" ${gi===0?'disabled':''}>▲</button><button class="mini" data-gmove="${esc(g.nome)}" data-dir="1" title="Descer grupo" ${gi===ga.length-1?'disabled':''}>▼</button></div>
    ${g.itens.map((c,i)=>`<div class="li-row cat-row" draggable="true" data-cat="${esc(c.nome)}"><span class="puxador" title="Arraste para reordenar">⠿</span><span class="flex1">${esc(c.nome)}</span><button class="mini" data-cmove="${esc(c.nome)}" data-dir="-1" title="Subir" ${i===0?'disabled':''}>▲</button><button class="mini" data-cmove="${esc(c.nome)}" data-dir="1" title="Descer" ${i===g.itens.length-1?'disabled':''}>▼</button><button class="mini" data-delcat="${esc(c.nome)}">🗑</button></div>`).join('')}
@@ -1572,8 +1598,9 @@ function renderConfig(){
  });
  el.querySelectorAll('button[data-delregra]').forEach(b=>{b.onclick=()=>{delete state.regras[b.dataset.delregra];rerender();};});
  el.querySelectorAll('button[data-delcat]').forEach(b=>{b.onclick=()=>{const n=b.dataset.delcat;const usos=state.transacoes.filter(t=>t.categoria===n).length;if(!confirm(`Excluir a linha "${n}"?`+(usos?` ${usos} lançamento(s) ficarão sem categoria.`:'')))return;if(SEED_CATS.some(s=>s.nome===n)&&!state.seedRemovidos.includes('cat:'+n))state.seedRemovidos.push('cat:'+n);state.categorias=state.categorias.filter(c=>c.nome!==n);state.transacoes.forEach(t=>{if(t.categoria===n)t.categoria=null;});marcarCategorias();rerender();};});
- el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});normalizarCategorias();marcarCategorias();rerender();toast('Linha criada. Use ▲ ou arraste para posicionar.');};});
- el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});normalizarCategorias();marcarCategorias();rerender();toast('Grupo criado. Use ▲ para subir na ordem.');};
+ el.querySelectorAll('button[data-addcat]').forEach(b=>{b.onclick=()=>{const inp=el.querySelector(`input[data-novacat="${CSS.escape(b.dataset.addcat)}"]`);const v=inp.value.trim();if(!v)return;if(catPorNome(v))return toast('Já existe uma linha com esse nome.');const g=grupos().find(x=>x.nome===b.dataset.addcat);state.categorias.push({grupo:g.nome,nome:v,tipo:g.tipo});finalizarNovaCategoria(v);};});
+ const cp=el.querySelector('#cfgCancelaPend');if(cp)cp.onclick=()=>{cancelarCatPendente();toast('Classificação cancelada.');};
+ el.querySelector('#cfgAddGrupo').onclick=()=>{const v=el.querySelector('#cfgNovoGrupo').value.trim();const t=el.querySelector('#cfgNovoGrupoTipo').value;if(!v)return;state.categorias.push({grupo:v,nome:v+' - Geral',tipo:t});finalizarNovaCategoria(v+' - Geral');};
  el.querySelector('#cfgLimparTrans').onclick=()=>{if(confirm('Apagar TODOS os lançamentos? O orçamento será mantido.')){state.transacoes=[];rerender();}};
  el.querySelector('#cfgReset').onclick=()=>{if(confirm('Apagar TUDO e voltar ao estado inicial?')&&confirm('Tem certeza? Exporte um backup antes!')){state=novoEstado();rerender();}};
 }
