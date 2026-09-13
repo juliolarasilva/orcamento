@@ -419,7 +419,7 @@ function renderOrcamento(){
 /* ================= IMPORTAÇÃO ================= */
 function renderImportacao(){
  const pend=state.transacoes.filter(t=>!t.categoria).sort((a,b)=>b.data.localeCompare(a.data));
- const catOpts=()=>{let h='<option value="">— classificar —</option>';grupos().forEach(g=>{h+=`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option>${esc(i.nome)}</option>`).join('')+'</optgroup>';});return h;};
+ const catOpts=()=>{let h='<option value="">— classificar —</option><option value="__nova__">➕ Criar nova categoria…</option>';grupos().forEach(g=>{h+=`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option>${esc(i.nome)}</option>`).join('')+'</optgroup>';});return h;};
  let h=`<div class="card"><h2>1. Importar arquivos</h2>
   <div class="row" style="margin-bottom:12px">
    <label><b>Fonte dos lançamentos:</b> <select id="impFonte" style="${state.ultimaFonte?'':'border-color:var(--amber);background:#fffbeb'}"><option value="">— selecione a conta/cartão —</option>${state.contas.map(c=>`<option ${c===state.ultimaFonte?'selected':''}>${esc(c)}</option>`).join('')}</select></label>
@@ -460,7 +460,7 @@ function renderImportacao(){
  dr.ondrop=e=>{e.preventDefault();dr.classList.remove('over');if(e.dataTransfer.files[0])abrirImportRealizado(e.dataTransfer.files[0]);};
  fri.onchange=()=>{if(fri.files[0])abrirImportRealizado(fri.files[0]);fri.value='';};
  el.querySelectorAll('input[data-obs]').forEach(i=>{i.onchange=()=>{const t=state.transacoes.find(x=>x.id===i.dataset.obs);if(t){t.obs=i.value.trim();salvar();}};});
- el.querySelectorAll('select[data-cat]').forEach(s=>{s.onchange=()=>categorizar(s.dataset.cat,s.value);});
+ el.querySelectorAll('select[data-cat]').forEach(s=>{s.onchange=()=>{if(s.value==='__nova__')return irCriarCategoria(s.dataset.cat,'importacao');categorizar(s.dataset.cat,s.value);};});
  el.querySelectorAll('button[data-anot]').forEach(b=>{b.onclick=()=>{
   const[tid,aid]=b.dataset.anot.split('|');
   const t=state.transacoes.find(x=>x.id===tid),a=state.anotacoes.find(x=>x.id===aid);
@@ -660,9 +660,9 @@ function renderRealAnual(){
 function compOpcoes(sel){const[y]=sel.split('-');const ys=[+y-1,+y,+y+1];let h='';ys.forEach(yy=>{for(let m=1;m<=12;m++){const v=`${yy}-${String(m).padStart(2,'0')}`;h+=`<option value="${v}" ${v===sel?'selected':''}>${MESES[m-1]}/${yy}</option>`;}});return h;}
 let catPendente=null;
 function cancelarCatPendente(){catPendente=null;if(tabAtiva==='config')renderConfig();}
-function irCriarCategoria(id){
+function irCriarCategoria(id,volta){
  const t=state.transacoes.find(x=>x.id===id);
- catPendente=t?{id:t.id,descricao:t.descricao}:null;
+ catPendente=t?{id:t.id,descricao:t.descricao,volta:volta||(tabAtiva==='config'?'realizado':tabAtiva)}:null;
  irParaAba('config');
  setTimeout(()=>{
   const card=[...document.querySelectorAll('#tab-config .card')].find(c=>/Categorias do orçamento/.test(c.textContent));
@@ -677,7 +677,7 @@ function finalizarNovaCategoria(nome){
  if(catPendente){
   const alvo=catPendente;catPendente=null;
   categorizar(alvo.id,nome);
-  irParaAba('realizado');
+  irParaAba(alvo.volta||'realizado');
   toast('Categoria "'+nome+'" criada e aplicada ao lançamento.');
   return;
  }
