@@ -509,6 +509,7 @@ function filtrarRealizado(){
   if(fRea.tipo==='despesa'&&!(cat&&cat.tipo==='despesa'))return false;
   if(fRea.tipo==='transferencia'&&!(cat&&cat.tipo==='transferencia'))return false;
   if(fRea.tipo==='estorno'&&!(t.valor<0))return false;
+  if(fRea.tipo==='conflito'&&!conflitoTipo(t))return false;
   const av=Math.abs(t.valor);
   if(vmin!=null&&av<vmin-0.005)return false;
   if(vmax!=null&&av>vmax+0.005)return false;
@@ -549,7 +550,7 @@ function renderRealizado(){
  </div>
  <div class="row ${fRea.avancado?'':'hide'}" id="rAvancado" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px">
   <label>Grupo <select id="rGrupo"><option value="todos">Todos</option>${grupos().map(g=>`<option ${fRea.grupo===g.nome?'selected':''}>${esc(g.nome)}</option>`).join('')}</select></label>
-  <label>Tipo <select id="rTipo">${[['todos','Todos'],['receita','Receitas'],['despesa','Despesas'],['transferencia','Transferências'],['estorno','Estornos (valor negativo)']].map(([v,r])=>`<option value="${v}" ${fRea.tipo===v?'selected':''}>${r}</option>`).join('')}</select></label>
+  <label>Tipo <select id="rTipo">${[['todos','Todos'],['receita','Receitas'],['despesa','Despesas'],['transferencia','Transferências'],['estorno','Estornos (valor negativo)'],['conflito','⚠ Tipo divergente da categoria']].map(([v,r])=>`<option value="${v}" ${fRea.tipo===v?'selected':''}>${r}</option>`).join('')}</select></label>
   <label>Valor de <input id="rVmin" class="num" style="width:100px" placeholder="0,00" value="${esc(String(fRea.vmin))}"></label>
   <label>até <input id="rVmax" class="num" style="width:100px" placeholder="sem limite" value="${esc(String(fRea.vmax))}"></label>
   <label>Data de <input id="rDini" type="date" value="${esc(fRea.dini)}"></label>
@@ -572,7 +573,7 @@ function renderRealizado(){
  trans.forEach(t=>{const cat=catPorNome(t.categoria||'');const rec=cat?.tipo==='receita';
   h+=`<tr><td class="l mut">${t.data.split('-').reverse().join('/')}</td>
   <td class="l"><select data-comp="${t.id}" style="font-size:12px">${compOpcoes(t.comp)}</select></td>
-  <td class="l fonte-pill">${esc(t.fonte)}</td><td class="l" title="${esc(t.descricao)}">${esc(t.descricao.slice(0,48))}</td>
+  <td class="l fonte-pill">${esc(t.fonte)}</td><td class="l" title="${esc(t.descricao)}">${esc(t.descricao.slice(0,48))}${conflitoTipo(t)?` <span class="tag warn" title="O extrato traz este lançamento como ${t.tipo==='receita'?'entrada':'saída'}, mas a categoria é de ${(catPorNome(t.categoria)||{}).tipo}">⚠ ${t.tipo==='receita'?'entrada':'saída'}</span>`:''}</td>
   <td class="${rec?'pos':(t.valor<0?'pos':'')}">${rec?'+':''}${fmt(t.valor)}</td>
   <td class="l"><select data-cat="${t.id}" style="width:100%">${catOpts(t.categoria)}</select></td>
   <td class="l"><input data-obs="${t.id}" value="${esc(t.obs||'')}" placeholder="anotação…" style="width:100%;font-size:12px"></td>
@@ -686,15 +687,32 @@ function finalizarNovaCategoria(nome){
 function categorizar(id,catNome){
  const t=state.transacoes.find(x=>x.id===id);if(!t)return;
  t.categoria=catNome||null;
+ if(catNome&&!tipoCompativel(t.tipo,catNome))toast('⚠ Atenção: lançamento de '+(t.tipo==='receita'?'entrada':'saída')+' classificado numa categoria de '+(catPorNome(catNome)||{}).tipo+'.');
  if(catNome){const chave=normDesc(t.descricao);
   if(chave.length>=4){state.regras[chave]=catNome;
-   const similares=state.transacoes.filter(x=>!x.categoria&&x.id!==id&&normDesc(x.descricao)===chave);
+   const similares=state.transacoes.filter(x=>!x.categoria&&x.id!==id&&normDesc(x.descricao)===chave&&tipoCompativel(x.tipo,catNome));
    similares.forEach(x=>x.categoria=catNome);
    if(similares.length)toast(`Regra criada: ${similares.length} lançamento(s) similar(es) categorizados automaticamente.`);}}
  rerender();}
+/* Uma entrada nunca deve cair numa categoria de despesa (nem o contrario).
+   Transferencias valem nos dois sentidos. */
+function tipoCompativel(tipoLanc,catNome){
+ const c=catPorNome(catNome||'');
+ if(!c)return true;
+ if(c.tipo==='transferencia')return true;
+ return c.tipo===(tipoLanc==='receita'?'receita':'despesa');
+}
+function conflitoTipo(t){return !!(t&&t.categoria&&!tipoCompativel(t.tipo,t.categoria));}
 function aplicarRegras(t){if(t.categoria)return t;const chave=normDesc(t.descricao);
- if(state.regras[chave]){t.categoria=state.regras[chave];return t;}
- for(const[k,v]of Object.entries(state.regras)){if(k.length>=6&&(chave.includes(k)||k.includes(chave)&&chave.length>=6)){t.categoria=v;break;}}
+ const cabe=v=>tipoCompativel(t.tipo,v);
+ if(state.regras[chave]&&cabe(state.regras[chave])){t.categoria=state.regras[chave];return t;}
+ if(state.regras[chave])return t;
+ // 2a passada: so com chave longa e por prefixo (evita "PIX TRANSF" capturar todo PIX)
+ for(const[k,v]of Object.entries(state.regras)){
+  if(k.length<12)continue;
+  if(!(chave.startsWith(k)||k.startsWith(chave)))continue;
+  if(!cabe(v))continue;
+  t.categoria=v;break;}
  return t;}
 function modalManual(){
  const catOpts='<option value="">—</option>'+grupos().map(g=>`<optgroup label="${esc(g.nome)}">`+g.itens.map(i=>`<option>${esc(i.nome)}</option>`).join('')+'</optgroup>').join('');
