@@ -945,6 +945,66 @@ function extrairFatura(pages){
  res._controle={tipo:'fatura',declarado};
  return res;
 }
+/* PDF sem camada de texto (o app da Caixa exporta o extrato como imagem):
+   renderiza cada pagina e le por OCR. */
+async function ocrPDF(doc){
+ await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js');
+ const worker=await Tesseract.createWorker('por');
+ let txt='';
+ try{
+  for(let p=1;p<=doc.numPages;p++){
+   if(doc.numPages>1)toast('Lendo a imagem da página '+p+' de '+doc.numPages+'…');
+   const page=await doc.getPage(p);
+   const base=page.getViewport({scale:1});
+   const escala=Math.min(3,Math.max(1,1800/base.width));
+   const vp=page.getViewport({scale:escala});
+   const cv=document.createElement('canvas');cv.width=Math.round(vp.width);cv.height=Math.round(vp.height);
+   await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+   const r=await worker.recognize(cv);
+   txt+=(r&&r.data&&r.data.text||'')+'\n';
+  }
+ }finally{try{await worker.terminate();}catch(e){}}
+ return txt;
+}
+/* Extrato da Caixa lido por OCR: "dd/mm/aaaa - hh:mm:ss  NrDoc  Historico  Favorecido  CPF  VALOR D|C  SALDO D|C" */
+function extrairExtratoOCR(txt){
+ const linhas=String(txt||'').split(/\r?\n/);
+ const norm=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+ const VAL=/(\d{1,3}(?:\.\d{3})*,\d{2})\s*([DC])(?![A-Z])/g;
+ const pv=s=>parseFloat(String(s).replace(/\./g,'').replace(',','.'));
+ const out=[];let ant=null,fim=null,ini=null,fimData=null;
+ linhas.forEach(l=>{
+  const N=norm(l);
+  if(/SALDO\s*ANTERIOR/.test(N)){const m=[...l.matchAll(VAL)];if(m.length){const u=m[m.length-1];const v=pv(u[1]);ant={valor:u[2]==='D'?-v:v};}return;}
+  const per=l.match(/(\d{2})\/(\d{2})\/(\d{4})\s*(?:at[eé]|a)\s*(\d{2})\/(\d{2})\/(\d{4})/i);
+  if(per){ini=per[3]+'-'+per[2]+'-'+per[1];fimData=per[6]+'-'+per[5]+'-'+per[4];return;}
+  const d=l.match(/^\s*(\d{2})\/(\d{2})\/(\d{4})/);
+  if(!d)return;
+  const vals=[...l.matchAll(VAL)];
+  if(vals.length<2)return;
+  const vv=vals[vals.length-2],vs=vals[vals.length-1];
+  const data=d[3]+'-'+d[2]+'-'+d[1];
+  const saldo=vs[2]==='D'?-pv(vs[1]):pv(vs[1]);
+  if(!fim||data>fim.data)fim={data,valor:saldo};
+  const valor=pv(vv[1]);
+  let desc=l.slice(0,vv.index)
+   .replace(/^\s*\d{2}\/\d{2}\/\d{4}(\s*-\s*\d{2}:\d{2}(:\d{2})?)?/,'')
+   .replace(/^\s*\d{4,8}\s*/,'')
+   .replace(/\*[\s\S]*$/,'')
+   .replace(/\s+/g,' ').trim();
+  if(!valor||valor===0)return;
+  if(/^SALDO\s*DIA/.test(norm(desc))||!desc)return;
+  out.push({data,descricao:desc.slice(0,70),valor,tipo:vv[2]==='C'?'receita':'despesa'});
+ });
+ if(out.length){
+  const datas=out.map(r=>r.data).sort();
+  out._controle={tipo:'extrato',
+   abertura:ant?{data:ini||datas[0],valor:ant.valor}:null,
+   fechamento:fim?{data:fimData||fim.data,valor:fim.valor}:null,
+   saldos:[],ocr:true};
+ }
+ return out;
+}
 async function parsePDF(f){
  if(typeof pdfjsLib==='undefined')throw new Error('Leitor de PDF indisponível (precisa de internet na 1ª vez).');
  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -957,6 +1017,14 @@ async function parsePDF(f){
   const itens=tc.items.map(it=>({x:it.transform[4],y:it.transform[5],w:it.width,s:it.str})).filter(i=>i.s.trim()!=='');
   paginasItens.push(itens);
   extrairLinhasColunas(itens).forEach(l=>linhas.push(l));
+ }
+ // PDF que é só imagem (ex.: extrato do app da Caixa): não há texto para ler — vai de OCR
+ if(paginasItens.reduce((s,p)=>s+p.length,0)<10){
+  toast('Este PDF é uma imagem, sem texto. Lendo por OCR — pode levar ~30s na 1ª vez…');
+  const texto=await ocrPDF(doc);
+  const regs=extrairExtratoOCR(texto);
+  if(regs&&regs.length)return regs;
+  throw new Error('o PDF é uma imagem e não consegui reconhecer os lançamentos. Prefira o extrato em OFX ou CSV do internet banking.');
  }
  // 1º fatura de cartão (datas dd/mm); depois extrato (dd/mm/aaaa); senão leitor antigo
  try{const rf=extrairFatura(paginasItens);if(rf&&rf.length)return rf;}catch(e){console.warn('fatura pdf:',e);}
