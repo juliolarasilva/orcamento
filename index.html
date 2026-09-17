@@ -901,7 +901,8 @@ function extrairFatura(pages){
  const ref=venc||{m:new Date().getMonth()+1,y:new Date().getFullYear()};
  // total declarado da fatura
  const LAB=/TOTALDESTAFATURA|VALORTOTALDESTAFATURA|TOTALDOSLANCAMENTOSATUAIS|TOTALDAFATURAEMREAL/;let declarado=null;
- pages.forEach(items=>{linhasDe(items).forEach(ws=>{const N=norm(ws.map(i=>i.s).join(''));if(LAB.test(N)){const vals=ws.filter(w=>isMoney(w.s)).map(w=>Math.abs(pv(w.s))).filter(v=>v!=null&&!isNaN(v));if(vals.length){const mx=Math.max(...vals);if(declarado==null||mx>declarado)declarado=mx;}}});});
+ const semRS=s=>String(s||'').replace(/R\$\s*/g,'').trim();
+ pages.forEach(items=>{linhasDe(items).forEach(ws=>{const N=norm(ws.map(i=>i.s).join(''));if(LAB.test(N)){const vals=ws.filter(w=>isMoney(semRS(w.s))).map(w=>Math.abs(pv(semRS(w.s)))).filter(v=>v!=null&&!isNaN(v));if(vals.length){const mx=Math.max(...vals);if(declarado==null||mx>declarado)declarado=mx;}}});});
  let modoCaixa=false;pages.forEach(items=>{linhasDe(items).forEach(ws=>{if(ws.some(w=>MONEYDC.test(w.s)))modoCaixa=true;});});
  /* Amex/Bradesco: coluna unica "Data | Historico | Cidade | US$ | R$", valor alinhado
     a direita e credito com o sinal DEPOIS do numero; o lado direito da pagina traz
@@ -935,8 +936,24 @@ function extrairFatura(pages){
    out.push({data:String(d.s).trim(),descricao:estab.slice(0,55)||'(sem descricao)',valor:v});
   });});
  }else if(modoCaixa){
-  const SKIP=/TOTALDAFATURA|OBRIGADOPELO|^TOTAL|SALDOANTERIOR|VALORTOTALDESTA|PAGAMENTOEFETUADO|^CREDITO\/DEBITO|FATORCONVERSAO|^PONTOS|BONIFICA/;let curdate=null;
-  pages.forEach(items=>{linhasDe(items).forEach(ws=>{if(!ws.length)return;ws.forEach(w=>{if(!isMoney(w.s))return;const v=pv(w.s);if(v==null||v===0)return;let dtok=null;ws.forEach(x=>{if(x.x<w.x&&DATEMM.test(x.s))dtok=x;});if(dtok)curdate=dtok.s;if(!curdate)return;const dx=dtok?dtok.x:-1e9;const estab=ws.filter(x=>x.x>dx&&x.x<w.x&&!DATEMM.test(x.s)&&!isMoney(x.s)).map(x=>x.s).join(' ').replace(/\s+/g,' ').trim();if(SKIP.test(norm(estab)))return;out.push({data:curdate,descricao:estab.slice(0,55)||'(sem descricao)',valor:v});});});});
+  const SKIP=/TOTALDAFATURA|OBRIGADOPELO|^TOTAL|SALDOANTERIOR|VALORTOTALDESTA|PAGAMENTOEFETUADO|^CREDITO\/DEBITO|FATORCONVERSAO|^PONTOS|BONIFICA/;
+  const LIXO=/^DATA|DESCRICAO|CIDADE|^VALOR|CARTAO|^CREDITO\/DEBITO|^TOTAL|^ANUIDADE$|^COMPRAS|^DEMONSTRATIVO|^LIMITES|^GUIADECONSUMO/;
+  let curdate=null,prevTok=null;
+  pages.forEach(items=>{linhasDe(items).forEach(ws=>{
+   if(!ws.length)return;
+   const temValor=ws.some(w=>isMoney(w.s)),temData=ws.some(w=>DATEMM.test(w.s));
+   if(!temValor&&!temData){const t=ws.map(x=>x.s).join(' ').replace(/\s+/g,' ').trim();prevTok=(t&&!LIXO.test(norm(t)))?ws.slice():null;return;}
+   ws.forEach(w=>{
+    if(!isMoney(w.s))return;const v=pv(w.s);if(v==null||v===0)return;
+    let dtok=null;ws.forEach(x=>{if(x.x<w.x&&DATEMM.test(x.s))dtok=x;});
+    if(dtok)curdate=dtok.s;if(!curdate)return;
+    const dx=dtok?dtok.x:Math.min(...ws.map(x=>x.x));
+    let estab=ws.filter(x=>x.x>=dx&&x.x<w.x&&!DATEMM.test(x.s)&&!isMoney(x.s)).map(x=>x.s).join(' ').replace(/\s+/g,' ').trim();
+    // o nome do estabelecimento pode estar na linha de cima, na mesma coluna
+    if(prevTok&&prevTok.every(x=>x.x>=dx&&x.x<w.x)){
+     estab=(prevTok.map(x=>x.s).join(' ')+' '+estab).replace(/\s+/g,' ').trim();prevTok=null;}
+    if(SKIP.test(norm(estab)))return;
+    out.push({data:curdate,descricao:estab.slice(0,55)||'(sem descricao)',valor:v});});});});
  }else{
   const STOPFUT=/^COMPRASPARCELADAS|^PROXIMASFATURAS|^SIMULACAODE|^SIMULACAOSAQUE|^LIMITESDECREDITO|^DEMONSTRATIVO|^NOVOTETODEJUROS|^ENCARGOSCOBRADOS|^DEMAISTAXAS/;const SKIPDESC=/LANCAMENTOSNOCARTAO|VALOREMR\$|^DATA|\(FINAL|PRODUTOS\/SERVICOS|^TOTAL/;
   pages.forEach(items=>{const linhas=linhasDe(items);[[120,360],[360,9999]].forEach(([lo,hi])=>{let prev=null,skipfut=false;linhas.forEach(allw=>{const ws=allw.filter(w=>w.x>=lo&&w.x<hi);if(!ws.length)return;const N=norm(ws.map(i=>i.s).join(''));const date=ws.find(w=>DATEMM.test(w.s));if(!date&&STOPFUT.test(N)){skipfut=true;prev=null;return;}if(skipfut)return;if(date){const vt=ws.find(w=>isMoney(w.s)&&w.x>date.x);if(vt){const v=pv(vt.s);const estab=ws.filter(w=>!DATEMM.test(w.s)&&!isMoney(w.s)&&w.x>date.x&&w.x<vt.x).map(w=>w.s).join(' ').replace(/\s+/g,' ').trim().slice(0,55);const o={data:date.s,descricao:estab||'(sem descricao)',valor:v};out.push(o);prev=o;return;}}if(prev&&!ws.some(w=>isMoney(w.s))&&!SKIPDESC.test(N)){prev.descricao=(prev.descricao+' '+ws.map(w=>w.s).join(' ')).replace(/\s+/g,' ').trim().slice(0,55);}});});});
