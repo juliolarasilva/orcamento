@@ -842,14 +842,14 @@ function extrairExtrato(pages){
   const byY={};items.forEach(it=>{const k=Math.round(it.y/2)*2;(byY[k]=byY[k]||[]).push(it);});
   const lines=Object.keys(byY).map(Number).sort((a,b)=>b-a).map(k=>byY[k].slice().sort((a,b)=>a.x-b.x));
   if(!have){for(const ln of lines){const N=norm(ln.map(i=>i.s).join(''));
-    if(N.includes('CREDITO')&&N.includes('DEBITO')){mode='CD';ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('CREDITO'))cols.C=right(i);if(s.startsWith('DEBITO'))cols.D=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('HISTORICO'))cols.H=i.x;});have=true;break;}
-    if(N.includes('VALOR')&&(N.includes('SALDO')||N.includes('HISTORICO')||N.includes('LANCAMENTOS'))){mode='V';ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('VALOR'))cols.V=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('LANCAMENTOS')||s.startsWith('HISTORICO'))cols.H=i.x;});have=true;break;}}}
+    if(N.includes('CREDITO')&&N.includes('DEBITO')){mode='CD';ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('CREDITO'))cols.C=right(i);if(s.startsWith('DEBITO'))cols.D=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('HISTORICO'))cols.H=i.x;if(s.startsWith('DOCTO')||s.startsWith('DOCUMENTO')||s.startsWith('NRDOC'))cols.DOC=i.x;});have=true;break;}
+    if(N.includes('VALOR')&&(N.includes('SALDO')||N.includes('HISTORICO')||N.includes('LANCAMENTOS'))){mode='V';ln.forEach(i=>{const s=norm(i.s);if(s.startsWith('VALOR'))cols.V=right(i);if(s.startsWith('SALDO'))cols.S=right(i);if(s.startsWith('LANCAMENTOS')||s.startsWith('HISTORICO'))cols.H=i.x;if(s.startsWith('DOCTO')||s.startsWith('DOCUMENTO')||s.startsWith('NRDOC'))cols.DOC=i.x;});have=true;break;}}}
   if(!have)return;
   if(items.some(i=>PAREN.test(i.s)))paren=true;
   const valKeys=['V','C','D'].filter(k=>cols[k]!=null);if(!valKeys.length)return;
-  const valleft=Math.min(...valKeys.map(k=>cols[k]));const hist=cols.H!=null?cols.H:80;
-  const meta=lines.map(ln=>{const txt=ln.map(i=>i.s).join(' ');const dateItem=ln.find(i=>DATE.test(i.s.trim()));const nums=ln.filter(i=>MONEY.test(i.s.trim().replace(/\s*\(\s*[+\-]\s*\)$/,'')));const ht=ln.filter(i=>{const s=i.s.trim();return !DATE.test(s)&&!MONEY.test(s.replace(/\s*\(\s*[+\-]\s*\)$/,''))&&!/^\(\s*[+\-]\s*\)$/.test(s)&&i.x>=hist-4&&i.x<valleft-5;}).map(i=>i.s).join(' ').trim();return {ln,N:norm(txt),date:dateItem?dateItem.s.trim():null,nums,ht};});
-  let curdate=null,stop=false;
+  const valleft=Math.min(...valKeys.map(k=>cols[k]));const hist=cols.H!=null?cols.H:80;const histFim=cols.DOC!=null?Math.min(cols.DOC-4,valleft-5):valleft-5;
+  const meta=lines.map(ln=>{const txt=ln.map(i=>i.s).join(' ');const dateItem=ln.find(i=>DATE.test(i.s.trim()));const nums=ln.filter(i=>MONEY.test(i.s.trim().replace(/\s*\(\s*[+\-]\s*\)$/,'')));const ht=ln.filter(i=>{const s=i.s.trim();return !DATE.test(s)&&!MONEY.test(s.replace(/\s*\(\s*[+\-]\s*\)$/,''))&&!/^\(\s*[+\-]\s*\)$/.test(s)&&i.x>=hist-4&&i.x<histFim;}).map(i=>i.s).join(' ').trim();return {ln,N:norm(txt),date:dateItem?dateItem.s.trim():null,nums,ht};});
+  let curdate=null,stop=false;const usado=new Set();
   const usable=j=>j>=0&&j<meta.length&&!meta[j].nums.length&&!meta[j].date&&!HDRJUNK.test(meta[j].N)&&!SKIP.test(meta[j].N);
   meta.forEach((m,i)=>{
    if(STOP.test(m.N))stop=true;
@@ -865,7 +865,10 @@ function extrairExtrato(pages){
    if(mode==='CD'){for(const it of m.nums){const xc=right(it),dC=Math.abs(xc-cols.C),dD=Math.abs(xc-cols.D),dS=cols.S!=null?Math.abs(xc-cols.S):1e9;if(dC<dD&&dC<dS){val=pvBR(it.s);tipo='receita';break;}if(dD<dS){val=pvBR(it.s);tipo='despesa';break;}}}
    else{const cand=m.nums.filter(it=>cols.S==null||Math.abs(right(it)-cols.V)<=Math.abs(right(it)-cols.S));if(cand.length){const it=cand[0];val=pvBR(it.s);if(paren){const sg=m.ln.map(x=>x.s).join(' ').match(PAREN);tipo=sg?(sg[1]==='+'?'receita':'despesa'):(val<0?'despesa':'receita');}else tipo=val<0?'despesa':'receita';}}
    if(val==null||val===0)return;
-   const above=usable(i-1)?meta[i-1].ht:'';const own=!HDRJUNK.test(m.N)?m.ht:'';const parts=own?[above,own]:[above,(usable(i+1)?meta[i+1].ht:'')];
+   const above=(usable(i-1)&&!usado.has(i-1))?meta[i-1].ht:'';if(above)usado.add(i-1);
+   const own=!HDRJUNK.test(m.N)?m.ht:'';
+   let abaixo='';if(!own&&usable(i+1)&&!usado.has(i+1)){abaixo=meta[i+1].ht;if(abaixo)usado.add(i+1);}
+   const parts=own?[above,own]:[above,abaixo];
    const desc=(parts.filter(Boolean).join(' ').replace(/\s+/g,' ').replace(/^\d{4,}\s+/,'').replace(/\b\d{2}:\d{2}\b/g,'').replace(/\s+/g,' ').trim().slice(0,70))||'(sem descricao)';
    const data=`${curdate.slice(6,10)}-${curdate.slice(3,5)}-${curdate.slice(0,2)}`;
    out.push({data,descricao:desc,valor:Math.abs(val),tipo});
@@ -877,7 +880,16 @@ function extrairExtrato(pages){
   const asc=[...S].sort((a,b)=>a.data.localeCompare(b.data));
   const ab=S.find(s=>/ANTERIOR/.test(s.label))||asc[0]||null;
   const fe=S.find(s=>/EMCONTACORRENTE/.test(s.label))||(asc.length?asc[asc.length-1]:null);
-  out._controle={tipo:'extrato',abertura:ab,fechamento:fe,saldos:S};
+  /* extratos de conta no limite (ex.: Bradesco Celular) imprimem o saldo DEVEDOR sem sinal:
+     a coluna cresce a cada debito. Se a cadeia so fecha com o saldo negativo, e esse o caso. */
+  let devedor=false;
+  const mov=out.reduce((t,r)=>t+(r.tipo==='receita'?r.valor:-r.valor),0);
+  if(ab&&fe&&Math.abs(mov)>0.005){
+   const eA=Math.abs(fe.valor-(ab.valor+mov)),eB=Math.abs(-fe.valor-(-ab.valor+mov));
+   if(eA>0.05&&eB<=0.05)devedor=true;
+  }
+  if(devedor)S.forEach(x=>{x.valor=-Math.abs(x.valor);});
+  out._controle={tipo:'extrato',abertura:ab,fechamento:fe,saldos:S,devedor};
  }
  return out;
 }
@@ -1167,6 +1179,7 @@ function conferenciaHTML(regs){
    if(c.divergencias)info+=` <b>⚠ ${c.divergencias} linha(s)</b> em que o valor impresso não bateu com a variação do saldo — confira essas linhas na prévia.`;
    if(c.semSaldo)info+=` <b>⚠ ${c.semSaldo} linha(s)</b> sem saldo legível — nessas usei o valor lido da imagem.`;
   }
+  if(c.devedor)info+='<br>ℹ Este extrato imprime o saldo <b>devedor sem sinal</b> (conta usando o limite): a coluna cresce a cada débito, então li os saldos como negativos.';
   if(ad<0.005)return box('ok','✅ <b>Confere com o extrato</b> — '+info);
   if(ad<=0.10)return box('ok','✅ Confere (diferença de '+fmt(diff)+', arredondamento/juros do banco) — '+info);
   let loc='';
