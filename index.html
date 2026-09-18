@@ -122,7 +122,7 @@ button.mini:hover{background:#eef2f6;color:var(--ink)}
   <div id="tab-config" class="hide"></div>
 </main>
 <div id="modalBg" class="modal-bg hide"><div class="modal" id="modalBox"></div></div>
-<input type="file" id="fileInput" multiple accept=".ofx,.csv,.txt,.pdf,.xls" class="hide">
+<input type="file" id="fileInput" multiple accept=".ofx,.csv,.txt,.pdf,.xls,.xlsx" class="hide">
 <input type="file" id="fileRealizado" accept=".csv,.txt" class="hide">
 <script>
 'use strict';
@@ -740,6 +740,7 @@ async function processarArquivos(files){
    if(ext==='ofx'||ext==='txt')regs=parseOFX(await lerTexto(f));
    else if(ext==='csv')regs=await parseCSVInterativo(f);
    else if(ext==='pdf')regs=await parsePDF(f);
+   else if(ext==='xls'||ext==='xlsx'||ext==='xlsm')regs=await parsePlanilha(f);
    else{toast('Formato não suportado: '+f.name);continue;}
    regs.forEach(r=>r.arquivo=f.name);
    const _ctrl=regs._controle,_prev=todas._controle;
@@ -782,9 +783,9 @@ function parseCSVlinhas(txt){
   else campoAtual+=ch;}
  if(campoAtual!==''||cur.length){cur.push(campoAtual);linhas.push(cur);}
  return linhas.filter(l=>l.some(c=>c.trim()!==''));}
-function parseCSVInterativo(f){
+function parseCSVInterativo(f,texto){
  return new Promise(async(res)=>{
-  const linhas=parseCSVlinhas(await lerTexto(f));
+  const linhas=parseCSVlinhas(texto!=null?texto:await lerTexto(f));
   if(linhas.length<2){toast('CSV vazio: '+f.name);return res([]);}
   // detecta automaticamente colunas de data, valor, descrição e Débito/Crédito
   const nCols=Math.max(...linhas.map(l=>l.length));
@@ -824,6 +825,69 @@ function parseCSVInterativo(f){
     const tipo=dc==='C'?'receita':(dc==='D'?'despesa':(v<0?'despesa':'receita'));
     regs.push({data,descricao:(l[cde]||'(sem descrição)').trim(),valor:Math.abs(v),tipo});});
    fecharModal();res(regs);};});}
+/* EXTRATO em PLANILHA (.xls/.xlsx), como o app do banco exporta.
+   Cabecalho "data | lancamento | ... | valor (R$) | saldos (R$)" (Itau PF) ou
+   "Data | Lancamento | Valor (R$) | Razao social" (Itau PJ). As linhas SALDO * sao
+   saldos, nao lancamentos: entram na conferencia e ficam fora da importacao. */
+function extrairPlanilha(linhas){
+ const DATA=/^\d{2}\/\d{2}\/\d{4}$/;
+ /* o .xls do Itau grava texto UTF-8 em campo latin1 ("DISPONÃVEL") */
+ const repara=s=>{s=String(s==null?'':s);if(!/[ÃÂ][-¿]/.test(s))return s;try{return decodeURIComponent(escape(s));}catch(e){return s;}};
+ const norm=s=>repara(s).toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'');
+ const num=v=>{if(typeof v==='number')return isNaN(v)?null:v;const t=String(v==null?'':v).trim();if(!t||!/\d/.test(t))return null;return parseValorBR(t);};
+ let h=-1,cD=-1,cL=-1,cV=-1,cS=-1,cR=-1;
+ linhas.forEach((l,i)=>{
+  if(h>=0||!l)return;
+  const cs=l.map(x=>norm(x));
+  const d=cs.findIndex(x=>x==='DATA'),lc=cs.findIndex(x=>/^(LANCAMENTO|HISTORICO|DESCRICAO)/.test(x)),v=cs.findIndex(x=>/^VALOR/.test(x));
+  if(d<0||lc<0||v<0)return;
+  h=i;cD=d;cL=lc;cV=v;cS=cs.findIndex(x=>/^SALDO/.test(x));cR=cs.findIndex(x=>/^RAZAOSOCIAL/.test(x));
+ });
+ if(h<0)return null;
+ const out=[],saldos=[];
+ for(let i=h+1;i<linhas.length;i++){
+  const l=linhas[i]||[];
+  const dt=String(l[cD]==null?'':l[cD]).trim();
+  if(!DATA.test(dt))continue;
+  const iso=dt.slice(6,10)+'-'+dt.slice(3,5)+'-'+dt.slice(0,2);
+  const desc=repara(l[cL]).trim(),N=norm(desc);
+  const vs=cS>=0?num(l[cS]):null,vv=num(l[cV]);
+  if(/^SALDO/.test(N)){const v=vs!=null?vs:vv;if(v!=null)saldos.push({data:iso,valor:v,label:N});continue;}
+  if(vs!=null&&vv==null){saldos.push({data:iso,valor:vs,label:N});continue;}
+  if(vv==null||vv===0)continue;
+  const rz=cR>=0?repara(l[cR]).trim():'';
+  out.push({data:iso,descricao:((rz?desc+' - '+rz:desc)||'(sem descricao)').slice(0,70),valor:Math.abs(vv),tipo:vv<0?'despesa':'receita'});
+ }
+ if(!out.length)return out;
+ if(saldos.length){
+  /* quando o extrato separa "saldo movimentacao conta" da aplicacao automatica,
+     e essa a serie que corresponde aos lancamentos da conta corrente */
+  let S=saldos.filter(s=>/^SALDOMOVIMENTA/.test(s.label));
+  if(S.length<2)S=saldos.filter(s=>!/^SALDOAPLIC/.test(s.label));
+  S=S.slice().sort((a,b)=>a.data.localeCompare(b.data));
+  if(S.length){
+   const ab=S.find(s=>/^SALDOANTERIOR/.test(s.label))||S[0],fe=S[S.length-1];
+   out._controle={tipo:'extrato',abertura:ab,fechamento:fe,saldos:S,janela:true,de:ab.data,ate:fe.data};
+  }
+ }
+ return out;
+}
+async function parsePlanilha(f){
+ if(typeof XLSX==='undefined'){toast('Lendo planilha do banco...');await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');}
+ if(typeof XLSX==='undefined')throw new Error('leitor de planilha indisponivel (precisa de internet na 1a vez)');
+ const wb=XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:'array'});
+ let melhor=null;
+ wb.SheetNames.forEach(n=>{
+  try{const regs=extrairPlanilha(XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:''}));
+   if(regs&&regs.length&&(!melhor||regs.length>melhor.length))melhor=regs;}catch(e){console.warn('aba',n,e);}
+ });
+ if(melhor)return melhor;
+ /* layout nao reconhecido: cai no mapeamento manual de colunas, com a maior aba */
+ let maior=[],nmax=-1;
+ wb.SheetNames.forEach(n=>{const rows=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''});if(rows.length>nmax){nmax=rows.length;maior=rows;}});
+ const csv=maior.map(l=>l.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(';')).join('\n');
+ return await parseCSVInterativo(f,csv);
+}
 /* Parser posicional de EXTRATO bancário em PDF (itens {x,y,w,s} do pdf.js).
    Trata: sinal de menos, sinal (+)/(-) após o número, e colunas Crédito/Débito separadas. */
 function extrairExtrato(pages){
@@ -1171,7 +1235,9 @@ function conferenciaHTML(regs){
  }
  if(c.tipo==='extrato'){
   if(!c.abertura||!c.fechamento)return box('info','🏦 Conferência: não localizei os saldos no extrato — confira manualmente.');
-  const net=regs.reduce((s,r)=>s+(r.tipo==='receita'?r.valor:-r.valor),0);
+  const dentro=r=>!c.janela||((!c.de||r.data>c.de)&&(!c.ate||r.data<=c.ate));
+  const net=regs.reduce((s,r)=>s+(dentro(r)?(r.tipo==='receita'?r.valor:-r.valor):0),0);
+  const fora=regs.filter(r=>!dentro(r)).length;
   const esperado=c.fechamento.valor-c.abertura.valor,diff=net-esperado,ad=Math.abs(diff);
   let info=`saldo ${dBR(c.abertura.data)} <b>${fmt(c.abertura.valor)}</b> + movimentos <b>${fmt(net)}</b> = <b>${fmt(c.abertura.valor+net)}</b> · saldo final ${dBR(c.fechamento.data)} <b>${fmt(c.fechamento.valor)}</b>`;
   if(c.ocr){
@@ -1179,6 +1245,7 @@ function conferenciaHTML(regs){
    if(c.divergencias)info+=` <b>⚠ ${c.divergencias} linha(s)</b> em que o valor impresso não bateu com a variação do saldo — confira essas linhas na prévia.`;
    if(c.semSaldo)info+=` <b>⚠ ${c.semSaldo} linha(s)</b> sem saldo legível — nessas usei o valor lido da imagem.`;
   }
+  if(fora)info+=`<br>ℹ ${fora} lançamento(s) fora do período coberto pelos saldos do extrato não entram nesta conta — eles são importados normalmente.`;
   if(c.devedor)info+='<br>ℹ Este extrato imprime o saldo <b>devedor sem sinal</b> (conta usando o limite): a coluna cresce a cada débito, então li os saldos como negativos.';
   if(ad<0.005)return box('ok','✅ <b>Confere com o extrato</b> — '+info);
   if(ad<=0.10)return box('ok','✅ Confere (diferença de '+fmt(diff)+', arredondamento/juros do banco) — '+info);
