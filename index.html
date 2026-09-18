@@ -756,19 +756,39 @@ function lerTexto(f){return new Promise((res,rej)=>{const r=new FileReader();r.o
  let txt=new TextDecoder('utf-8',{fatal:false}).decode(buf);
  if((txt.match(/�/g)||[]).length>2)txt=new TextDecoder('windows-1252').decode(buf);
  res(txt);};r.onerror=rej;r.readAsArrayBuffer(f);});}
+/* Alguns bancos mandam as linhas de SALDO junto com os lancamentos (planilha e OFX
+   exportados pelo app do Itau). Elas nao sao movimento: viram pontos de conferencia. */
+const normSaldo=s=>String(s==null?'':s).toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'');
+function controleSaldos(saldos){
+ if(!saldos||!saldos.length)return null;
+ /* com "saldo movimentacao conta" separado, e essa a serie da conta corrente:
+    a serie "total" inclui a aplicacao automatica, cujo rendimento nao e lancado */
+ let S=saldos.filter(x=>/^SALDOMOVIMENTA/.test(x.label));
+ if(S.length<2)S=saldos.filter(x=>!/^SALDOAPLIC/.test(x.label));
+ S=S.slice().sort((a,b)=>a.data.localeCompare(b.data));
+ if(!S.length)return null;
+ const ab=S.find(x=>/^SALDOANTERIOR/.test(x.label))||S[0],fe=S[S.length-1];
+ return {tipo:'extrato',abertura:ab,fechamento:fe,saldos:S,janela:true,de:ab.data,ate:fe.data};
+}
 function parseOFX(txt){
  const regs=[];
  const blocos=txt.match(/<STMTTRN>[\s\S]*?(?=<\/STMTTRN>|<STMTTRN>|$)/gi)||[];
  const campo=(b,tag)=>{const m=b.match(new RegExp('<'+tag+'>([^<\\r\\n]*)','i'));return m?m[1].trim():null;};
+ const saldos=[];
  blocos.forEach(b=>{
   const dt=campo(b,'DTPOSTED'),amt=campo(b,'TRNAMT');
   const desc=campo(b,'MEMO')||campo(b,'NAME')||'(sem descrição)';
   if(!dt||!amt)return;
   const data=`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}`;
   let v=parseFloat(String(amt).replace(',','.'));
-  if(isNaN(v)||v===0)return;
+  if(isNaN(v))return;
+  const N=normSaldo(desc);
+  if(/^SALDO/.test(N)){saldos.push({data,valor:v,label:N});return;}
+  if(v===0)return;
   regs.push({data,descricao:desc,valor:Math.abs(v),tipo:v<0?'despesa':'receita'});
  });
+ const ctrl=controleSaldos(saldos);
+ if(ctrl&&regs.length)regs._controle=ctrl;
  const lb=txt.match(/<LEDGERBAL>[\s\S]*?<BALAMT>([^<\r\n]+)[\s\S]*?<DTASOF>([^<\r\n]+)/i);
  if(lb){const v=parseFloat(String(lb[1]).trim().replace(',','.'));const d=String(lb[2]).trim();
   if(!isNaN(v)&&/^\d{8}/.test(d))regs.forEach(r=>r._ledger={valor:v,data:`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`});}
@@ -859,17 +879,8 @@ function extrairPlanilha(linhas){
   out.push({data:iso,descricao:((rz?desc+' - '+rz:desc)||'(sem descricao)').slice(0,70),valor:Math.abs(vv),tipo:vv<0?'despesa':'receita'});
  }
  if(!out.length)return out;
- if(saldos.length){
-  /* quando o extrato separa "saldo movimentacao conta" da aplicacao automatica,
-     e essa a serie que corresponde aos lancamentos da conta corrente */
-  let S=saldos.filter(s=>/^SALDOMOVIMENTA/.test(s.label));
-  if(S.length<2)S=saldos.filter(s=>!/^SALDOAPLIC/.test(s.label));
-  S=S.slice().sort((a,b)=>a.data.localeCompare(b.data));
-  if(S.length){
-   const ab=S.find(s=>/^SALDOANTERIOR/.test(s.label))||S[0],fe=S[S.length-1];
-   out._controle={tipo:'extrato',abertura:ab,fechamento:fe,saldos:S,janela:true,de:ab.data,ate:fe.data};
-  }
- }
+ const ctrl=controleSaldos(saldos);
+ if(ctrl)out._controle=ctrl;
  return out;
 }
 async function parsePlanilha(f){
