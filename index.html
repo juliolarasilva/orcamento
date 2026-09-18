@@ -955,8 +955,40 @@ function extrairFatura(pages){
     if(SKIP.test(norm(estab)))return;
     out.push({data:curdate,descricao:estab.slice(0,55)||'(sem descricao)',valor:v});});});});
  }else{
-  const STOPFUT=/^COMPRASPARCELADAS|^PROXIMASFATURAS|^SIMULACAODE|^SIMULACAOSAQUE|^LIMITESDECREDITO|^DEMONSTRATIVO|^NOVOTETODEJUROS|^ENCARGOSCOBRADOS|^DEMAISTAXAS/;const SKIPDESC=/LANCAMENTOSNOCARTAO|VALOREMR\$|^DATA|\(FINAL|PRODUTOS\/SERVICOS|^TOTAL/;
-  pages.forEach(items=>{const linhas=linhasDe(items);[[120,360],[360,9999]].forEach(([lo,hi])=>{let prev=null,skipfut=false;linhas.forEach(allw=>{const ws=allw.filter(w=>w.x>=lo&&w.x<hi);if(!ws.length)return;const N=norm(ws.map(i=>i.s).join(''));const date=ws.find(w=>DATEMM.test(w.s));if(!date&&STOPFUT.test(N)){skipfut=true;prev=null;return;}if(skipfut)return;if(date){const vt=ws.find(w=>isMoney(w.s)&&w.x>date.x);if(vt){const v=pv(vt.s);const estab=ws.filter(w=>!DATEMM.test(w.s)&&!isMoney(w.s)&&w.x>date.x&&w.x<vt.x).map(w=>w.s).join(' ').replace(/\s+/g,' ').trim().slice(0,55);const o={data:date.s,descricao:estab||'(sem descricao)',valor:v};out.push(o);prev=o;return;}}if(prev&&!ws.some(w=>isMoney(w.s))&&!SKIPDESC.test(N)){prev.descricao=(prev.descricao+' '+ws.map(w=>w.s).join(' ')).replace(/\s+/g,' ').trim().slice(0,55);}});});});
+  const STOPFUT=/^COMPRASPARCELADAS|^PROXIMASFATURAS|^SIMULACAODE|^SIMULACAOSAQUE|^LIMITESDECREDITO|^DEMONSTRATIVO|^NOVOTETODEJUROS|^ENCARGOSCOBRADOS|^DEMAISTAXAS/;
+  const SKIPDESC=/LANCAMENTOSNOCARTAO|VALOREMR\$|^DATA|\(FINAL|PRODUTOS\/SERVICOS|^TOTAL|^LANCAMENTOS|^PAGAMENTOSEFETUADOS|^DOLARDECONVERSAO|^REPASSEDEIOF|^CONTINUA|^FIQUEATENTO/;
+  const SKIPLANC=/^PAGAMENTO$|^PAGAMENTOEFETUADO|^PAGTO|^TOTALDOSPAGAMENTOS|^SALDOFINANCIADO/;
+  const IOFINT=/^REPASSEDEIOF/;const DATEIN=/^(\d{2}\/\d{2})\s+(\S.*)$/;
+  /* a divisa entre as duas colunas muda de PDF para PDF: descobrimos as colunas
+     pelos proprios x das datas dd/mm (grupos com 3+ ocorrencias). */
+  const cnt={};pages.forEach(items=>linhasDe(items).forEach(ws=>ws.forEach(w=>{const t=String(w.s).trim();if(DATEMM.test(t)||DATEIN.test(t)){const x=Math.round(w.x);cnt[x]=(cnt[x]||0)+1;}})));
+  let cols=[[120,9999]];
+  const pts=Object.keys(cnt).map(Number).sort((a,b)=>a-b);
+  if(pts.length){
+   const mx=Math.max(...pts.map(x=>cnt[x])),lim=Math.max(3,mx*0.2);
+   const fortes=pts.filter(x=>cnt[x]>=lim);            /* x de datas reais, nao de parcelas 03/10 */
+   const gr=[];fortes.forEach(x=>{const g=gr[gr.length-1];if(g&&x-g[g.length-1]<=80)g.push(x);else gr.push([x]);});
+   const ini=gr.map(g=>{const piso=g[0]-30;return Math.min(g[0],...pts.filter(x=>x>=piso&&x<g[0]));});
+   if(ini.length)cols=ini.map((v,i)=>[v-12,i+1<ini.length?ini[i+1]-12:9999]);}
+  pages.forEach(items=>{const linhas=linhasDe(items);cols.forEach(([lo,hi])=>{let prev=null,skipfut=false,ultData=null;linhas.forEach(allw=>{
+   const ws=allw.filter(w=>w.x>=lo&&w.x<hi);if(!ws.length)return;
+   const N=norm(ws.map(i=>i.s).join(''));
+   let date=ws.find(w=>DATEMM.test(String(w.s).trim())),desc0='';
+   if(!date){const m=String(ws[0].s).match(DATEIN);if(m){date={x:ws[0].x,s:m[1]};desc0=m[2];}}
+   if(!date&&STOPFUT.test(N)){skipfut=true;prev=null;return;}
+   if(skipfut)return;
+   if(date){const vt=ws.find(w=>isMoney(w.s)&&w.x>date.x);
+    if(vt){const v=pv(vt.s);
+     let estab=ws.filter(w=>!DATEMM.test(String(w.s).trim())&&!isMoney(w.s)&&w.x>date.x&&w.x<vt.x).map(w=>w.s).join(' ').replace(/\s+/g,' ').trim();
+     if(desc0)estab=(desc0+' '+estab).replace(/\s+/g,' ').trim();
+     ultData=date.s;
+     if(SKIPLANC.test(norm(estab))){prev=null;return;}
+     const o={data:date.s,descricao:estab.slice(0,55)||'(sem descricao)',valor:v};out.push(o);prev=o;return;}}
+   /* o repasse de IOF das compras internacionais entra no total da fatura e nao tem data */
+   if(!date&&IOFINT.test(N)&&ultData){const vt=ws.find(w=>isMoney(w.s));const v=vt?pv(vt.s):null;
+    if(v){out.push({data:ultData,descricao:'Repasse de IOF (internacional)',valor:v});prev=null;return;}}
+   if(prev&&!ws.some(w=>isMoney(w.s))&&!SKIPDESC.test(N)){prev.descricao=(prev.descricao+' '+ws.map(w=>w.s).join(' ')).replace(/\s+/g,' ').trim().slice(0,55);}
+  });});});
  }
  const res=out.map(o=>{let data=o.data;if(/^\d{2}\/\d{2}$/.test(data)){const mm=+data.slice(3,5);const y=mm<=ref.m?ref.y:ref.y-1;data=y+'-'+data.slice(3,5)+'-'+data.slice(0,2);}return {data,descricao:o.descricao,valor:o.valor,tipo:'despesa'};});
  res._controle={tipo:'fatura',declarado};
